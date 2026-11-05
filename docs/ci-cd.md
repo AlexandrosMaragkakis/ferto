@@ -63,6 +63,12 @@ Create a `production` GitHub environment, restricted to `main`, with these
 | `FERTO_INSTANCE_CONFIG` | JSON with exactly `accountId`, `databaseId`, `databaseName`, `spotifyClientId`, `ownerSpotifyId`, `origin` |
 | `FERTO_BACKUP_PUBLIC_KEY` | Contents of the local public `recipient.asc` |
 
+Use a custom Cloudflare token with account permissions **Workers Scripts: Edit**,
+**D1: Edit**, **Queues: Edit** and **Account Analytics: Read**, limited to the
+account hosting the instance. The analytics permission supports Wrangler's D1
+usage metadata through the [GraphQL Analytics API](https://developers.cloudflare.com/analytics/graphql-api/getting-started/authentication/api-token-auth/).
+This `workers.dev` setup does not need DNS or zone-edit permissions.
+
 Use the actual existing instance identifiers. Never add `SESSION_SECRET`,
 Spotify refresh credentials or a private decryption key to that JSON. Spotify
 runtime secrets stay on Cloudflare. Configure required verification checks for
