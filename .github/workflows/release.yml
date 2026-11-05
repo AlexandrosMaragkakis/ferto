@@ -1,0 +1,16 @@
+name: Reviewed release
+on:
+  workflow_dispatch:
+    inputs:
+      apply_migrations:
+        description: Apply pending SQL migrations after compatibility review
+        type: boolean
+        default: false
+permissions:
+  contents: read
+  actions: read
+jobs:
+  release:
+    uses: ./.github/workflows/checks.yml
+    with:
+      apply_migrations: ${{ inputs.apply_migrations }}

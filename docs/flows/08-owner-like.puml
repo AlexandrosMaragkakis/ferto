@@ -1,0 +1,60 @@
+@startuml
+title Owner decision — Like — v4
+
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+autonumber
+
+actor Owner
+boundary "Browser SPA" as Browser
+control "FERTO Worker" as Worker
+participant "Spotify Web API" as Spotify
+database "D1" as D1
+
+Owner -> Browser: Click "Like" on the current recommendation
+Browser -> Worker: POST /api/owner/like { trackId }\nOrigin + X-CSRF-Token + owner session cookie
+
+alt Visitor, wrong origin, missing CSRF,\nnot the configured owner, or invalid track id
+  Worker --> Browser: 401 / 403 / 400 — before any Spotify call
+else Valid owner request
+  Worker -> Spotify: Grant SPOTIFY_REFRESH_TOKEN\n(service token, includes user-library-modify)
+  Spotify --> Worker: Access token
+
+  Worker -> D1: Resolve canonical + exact live/staging aliases\nin one generation snapshot
+  alt Resolved identity is still exact-id only
+    Worker -> Spotify: GET /v1/tracks/{oldId} to confirm ISRC
+    alt Transient metadata failure
+      Worker --> Browser: 503 — candidate retained; Spotify save not attempted
+    end
+  end
+
+  Worker -> Spotify: PUT /v1/me/library?uris=spotify:track:{trackId}\n— **saved to Spotify first**
+
+  alt Spotify save fails
+    Spotify --> Worker: Non-success response
+    Worker --> Browser: 502 — the candidate is retained
+    Browser --> Owner: "Could not save — the track stays"
+    note right of Worker #FFDDDD
+      Failure retention: nothing is excluded
+      locally when Spotify did not confirm the
+      save, so the recording is not lost from
+      both the library and the shelf at once.
+    end note
+  else Spotify save confirmed
+    Spotify --> Worker: Success
+    Worker -> D1: Re-read live + active destinations in one snapshot\n(either side of a concurrent promotion)
+    Worker -> D1: INSERT OR IGNORE the recording key into\nrebuild_known_recordings for the live generation\nAND every active staging generation
+    Worker -> D1: Atomic serialized batch: remove its live track slot\nand compact the track/artist slot ranges + counters
+    note right of D1
+      The exclusion is recording-wide under every
+      alias: another representative of the same
+      ISRC is hidden too, and a staging
+      generation promoted later stays excluded.
+    end note
+    Worker --> Browser: 200 { ok: true }
+    Browser -> Worker: GET /api/recommendation (next track)
+    Worker --> Browser: A different recommendation, if one is available
+  end
+end
+
+@enduml

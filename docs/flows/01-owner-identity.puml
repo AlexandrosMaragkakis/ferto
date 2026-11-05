@@ -1,0 +1,70 @@
+@startuml
+title Owner identity login and logout — v4
+
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+autonumber
+
+actor Owner
+boundary "Browser SPA" as Browser
+control "FERTO Worker" as Worker
+database "D1" as D1
+participant "Spotify Accounts" as Accounts
+participant "Spotify Web API" as Spotify
+
+== Sign in (identity only) ==
+
+Owner -> Browser: Click "Sign in"
+Browser -> Browser: Read ferto_csrf cookie
+Browser -> Worker: POST /api/owner/login\nOrigin + X-CSRF-Token
+Worker -> Worker: Validate same-origin and CSRF token
+
+Worker -> Worker: Generate OAuth state + PKCE verifier (S256)
+Worker -> D1: Delete expired oauth_states
+Worker -> D1: Store hashed state, verifier, expiry
+Worker --> Browser: { authorizeUrl }
+
+Browser -> Accounts: Navigate authorizeUrl\nscope=user-read-private only
+Owner -> Accounts: Approve identity sign-in
+Accounts --> Browser: 302 APP_ORIGIN/api/owner/callback\ncode + state
+Browser -> Worker: GET /api/owner/callback?code&state\n(navigational request)
+
+Worker -> D1: Load unexpired verifier by hashed state
+Worker -> D1: Delete the one-time oauth state
+
+alt State missing or expired
+  Worker --> Browser: 400 expired OAuth state
+else State is valid
+  Worker -> Accounts: Exchange code + PKCE verifier for tokens\n(no client secret)
+  Accounts --> Worker: Short-lived access token
+  Worker -> Spotify: GET /v1/me
+  Spotify --> Worker: Profile (immutable account_id)
+
+  alt Profile account_id is not OWNER_SPOTIFY_ID
+    Worker --> Browser: 403 wrong Spotify account
+  else Configured owner
+    Worker -> Worker: Generate opaque session token
+    Worker -> D1: Store HMAC(session token), owner account_id, expiry
+    Worker --> Browser: 302 /?owner=1\nHttpOnly, SameSite=Lax session cookie (7 days)
+    Browser --> Owner: Owner controls visible\n(Like / Never, refresh status)
+  end
+end
+
+note over Worker,Browser #D9EAD3
+  The browser never receives a Spotify credential: the
+  access token lives only inside the Worker for this one
+  callback exchange. The cookie it receives is a FERTO
+  session cookie. This identity login is separate from
+  the service token that rebuilds the catalogue.
+end note
+
+== Sign out ==
+
+Owner -> Browser: Click "Logout"
+Browser -> Worker: POST /api/owner/logout\nOrigin + X-CSRF-Token + session cookie
+Worker -> Worker: Validate same-origin, CSRF, and owner session
+Worker -> D1: Delete the owner_sessions row
+Worker --> Browser: 200; clear session cookie
+Browser --> Owner: Public read-only visitor view
+
+@enduml

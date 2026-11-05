@@ -1,0 +1,11 @@
+[Unit]
+Description=FERTO verified local D1 backup
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/ABSOLUTE/PATH/TO/ferto
+ExecStart=/ABSOLUTE/PATH/TO/node scripts/backup.mjs create
+UMask=0077
+TimeoutStartSec=15min

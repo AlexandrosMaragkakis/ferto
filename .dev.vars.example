@@ -1,0 +1,16 @@
+# Copy to .dev.vars and fill locally. Do not commit .dev.vars.
+#
+# v4 bindings only. Both Spotify authorization flows use PKCE with the public
+# client id, so no Spotify client secret is required. Playback was removed, so
+# there is no playback secret either.
+#
+# SPOTIFY_REFRESH_TOKEN is the service token. Generate it locally with:
+#   npm run spotify:authorize -- --local
+# (or pipe it straight to wrangler with --production). The browser owner
+# sign-in uses a separate identity-only token that is never stored here.
+SPOTIFY_CLIENT_ID=REPLACE_WITH_SPOTIFY_CLIENT_ID
+# Spotify GET /me account_id (immutable), not the mutable profile id.
+OWNER_SPOTIFY_ID=REPLACE_WITH_OWNER_SPOTIFY_ID
+APP_ORIGIN=http://127.0.0.1:5173
+SPOTIFY_REFRESH_TOKEN=your_spotify_service_refresh_token
+SESSION_SECRET=at_least_32_random_characters

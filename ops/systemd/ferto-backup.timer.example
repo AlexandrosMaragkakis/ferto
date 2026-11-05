@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly FERTO backup while this computer is available
+
+[Timer]
+OnCalendar=Sun *-*-* 20:00:00 Europe/Athens
+Persistent=true
+RandomizedDelaySec=5min
+Unit=ferto-backup.service
+
+[Install]
+WantedBy=timers.target

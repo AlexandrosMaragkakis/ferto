@@ -1,0 +1,8 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["@cloudflare/workers-types"]
+  },
+  "include": ["src", "../src/worker-configuration.d.ts", "../src/secret-bindings.d.ts"]
+}

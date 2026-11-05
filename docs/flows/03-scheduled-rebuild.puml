@@ -1,0 +1,127 @@
+@startuml
+title Weekly scheduler and serialized rebuild queue — v4
+
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+autonumber
+
+participant "Cloudflare Cron\n0 3 * * SUN (Sun 03:00 UTC)" as Cron
+control "Worker\nscheduled handler" as Scheduler
+queue "Cloudflare Queue\nmax_batch_size=1\nmax_concurrency=1\nretry_delay=30s" as Queue
+control "Queue Consumer" as Consumer
+database "D1" as D1
+participant "Spotify" as Spotify
+
+== Owner-triggered start ==
+
+actor Owner
+Owner -> Scheduler: POST /api/owner/refresh\n(owner session + same-origin CSRF)
+alt No active job, or previous job failed systemically
+  Scheduler -> D1: Create a fresh generation in preflight
+  Scheduler -> Queue: Send {generation, revision: 0} immediately
+else Legacy quota or exhausted upstream failure
+  Scheduler -> D1: Reactivate the same generation and cursors\nwithout deleting staging; preserve the retry deadline
+  Scheduler -> Queue: Send the recovered generation + new revision
+else Active or cooling-down job
+  Scheduler -> Queue: Re-send the same generation + revision;\nwake immediately for database-only publication during\ndiscovery waits, otherwise use the remaining gate delay
+  Scheduler --> Owner: Return current status (no duplicate job)
+end
+
+== Sunday 03:00 UTC tick ==
+
+Cron -> Scheduler: scheduled event
+Scheduler -> D1: Read the singleton rebuild_jobs row
+
+alt No job (idle)
+  Scheduler -> D1: Create generation "v4-…" phase=preflight\nrevision=0
+  Scheduler -> Queue: Send {generation, revision: 0} immediately
+  Scheduler -> D1: Persist next_refresh_at =\nnext Sunday 03:00 UTC
+else Active job with a retry cooldown
+  Scheduler -> Queue: Re-send current {generation, revision}\nwith the remaining cooldown as delay
+  note right of Scheduler
+    Wakes a sleeping rebuild. A second tick never
+    starts an overlapping rebuild: the singleton job
+    row is the serialization point.
+  end note
+else Legacy transient failure
+  Scheduler -> D1: Resume the same generation and all saved work
+  Scheduler -> Queue: Send the recovered revision with its remaining delay
+else Systemically failed job
+  Scheduler -> D1: Purge the failed job, its staging,\nand its work queues
+  Scheduler -> D1: Create a fresh generation (preflight)
+  Scheduler -> Queue: Send the new generation immediately
+end
+
+== Every 15 minutes: stalled-work watchdog ==
+
+Cron -> Scheduler: */15 * * * * scheduled event
+Scheduler -> D1: Read active job and durable gates
+alt Active and overdue by at least two minutes\nafter update, lease, pacing and retry deadlines
+  Scheduler -> Queue: Re-send current {generation, revision}
+else Idle, failed, working or cooling down
+  Scheduler -> Scheduler: No action; keep weekly schedule
+end
+
+== One serialized unit of work per delivery ==
+
+loop One delivery at a time
+  Queue -> Consumer: {generation, revision}
+  Consumer -> D1: Read the current job
+
+  alt Missing or different generation
+    Consumer -> Queue: ACK stale delivery
+  else Stale revision
+    Consumer -> Queue: ACK stale delivery (no cursor regression)
+  else A dispatch is still pending
+    Consumer -> Queue: Re-send the current revision
+    Consumer -> Queue: ACK this delivery
+  else Spotify retry/pacing deadline is still in the future
+    Consumer -> D1: After initial exclusions are frozen, find up to 30\nalready validated unpublished recordings for one artist
+    alt Eligible staging and lease acquired
+      Consumer -> D1: Atomic publication + counts + separate publication cursor;\npreserve source cursors, revision and all provider deadlines
+      Consumer -> Queue: Send the same revision immediately for more database work
+    else No eligible staging or lease held elsewhere
+      Consumer -> Queue: Re-send after the remaining durable gate delay
+    end
+    Consumer -> Queue: ACK this delivery (no Spotify requests)
+  else Another consumer holds the lease
+    Consumer -> Queue: Retry the delivery later (no overlap)
+  else Current work item
+    Consumer -> D1: Acquire the refresh lease
+    Consumer -> Consumer: Honor the pacing clock:\nadaptive gap: pages start at 2s,\n30 track requests wait ≥30s\n(durable next_read_at) and any retry_at cooldown
+    Consumer -> Spotify: At most one Spotify page this unit
+    Spotify --> Consumer: Page or failure
+    Consumer -> D1: Persist results, release lease,\nincrement revision, set dispatch_pending
+    Consumer -> Queue: Send the next revision with a delay\n(2s for a page, 30s for 30 track reads)
+    Consumer -> D1: Clear dispatch_pending
+    Consumer -> Queue: ACK this delivery
+  end
+end
+
+note over Queue,Consumer #FFF2CC
+  The consumer is deliberately serialized (one message,
+  one batch, one concurrency), so exactly one rebuild
+  generation progresses at a time and the D1 lease is a
+  second guard, not the only one.
+end note
+
+note over Consumer,Spotify #FFDDDD
+  Failures are classified per unit:
+  · rolling 429 → honor Retry-After, delayed re-send,
+    no retry attempt consumed; double pacing multiplier\n    and reduce metadata concurrency/batch size
+  · QUOTA_EXCEEDED 429 → save progress and pause; retry
+    at valid Retry-After, otherwise back off 15m to 6h.
+    One-request metadata probe, no upstream attempt consumed.
+    Keep the same generation, cursors, and staged tracks.
+    Re-send long waits in chunks of at most 12h; every
+    delivery checks the full durable retry_at deadline.
+    Chunks stay below the queue’s 24h retention window.
+  · 5xx → persisted exponential backoff 30s/60s/…,
+    after 5 attempts pause for 1h, then resume the same work
+  · other 4xx → systemic fail (bad request class)
+  A systemic fail keeps the live shelf untouched and the
+  failed job row in place for the next Sunday tick to
+  replace. See flow 04 for the crawl phases.
+end note
+
+@enduml

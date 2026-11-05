@@ -1,0 +1,48 @@
+/* Owner controls share the artwork palette and stay out of the public view. */
+.owner-panel {
+  grid-column: 1 / -1;
+  display: grid;
+  justify-self: center;
+  width: min(100%, 740px);
+  min-width: 0;
+  gap: 12px;
+  padding: 20px;
+  border: 1px solid color-mix(in srgb, var(--line) 16%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel) 75%, transparent);
+}
+
+.owner-panel button {
+  min-height: 42px;
+  padding: 11px 16px;
+  border: 1px solid var(--accent-edge);
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.4;
+  letter-spacing: .08em;
+  cursor: pointer;
+}
+
+.owner-panel #logout { border-color: var(--control-edge); background: var(--control); color: var(--control-ink); }
+.owner-panel button:disabled { opacity: .55; cursor: wait; }
+.refresh-status { white-space: pre-line; }
+#operational-history { min-width: 0; text-align: left; font-size: 12px; line-height: 1.6; }
+#operational-history summary { padding: 8px 0; color: var(--muted); cursor: pointer; overflow-wrap: anywhere; }
+#history-content {
+  max-height: 360px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+@media (max-width: 767px) {
+  .owner-panel { padding: 15px 12px; gap: 10px; }
+  .refresh-status { font-size: 11px; }
+}

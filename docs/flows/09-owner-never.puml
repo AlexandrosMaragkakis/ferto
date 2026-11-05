@@ -1,0 +1,68 @@
+@startuml
+title Owner decision — Never Again — v4
+
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+autonumber
+
+actor Owner
+boundary "Browser SPA" as Browser
+control "FERTO Worker" as Worker
+participant "Spotify Web API" as Spotify
+database "D1" as D1
+
+Owner -> Browser: Click "Never" on the current recommendation
+Browser -> Worker: POST /api/owner/never-again { trackId }\nOrigin + X-CSRF-Token + owner session cookie
+
+alt Visitor, wrong origin, missing CSRF,\nnot the configured owner, or invalid track id
+  Worker --> Browser: 401 / 403 / 400 — before any Spotify call
+else Valid owner request
+  Worker -> D1: Look up the live recording by Spotify id
+
+  alt v4 row with a confirmed ISRC identity
+    Worker -> Worker: Use the isrc: recording key directly
+    note right of Worker
+      Zero Spotify calls in the common path.
+    end note
+  else Legacy exact-id row — fallback metadata lookup
+    Worker -> Spotify: Grant SPOTIFY_REFRESH_TOKEN\n(service token)
+    Spotify --> Worker: Access token
+    Worker -> Spotify: GET /v1/tracks/{trackId}
+
+    alt 200 with a confirmed ISRC
+      Spotify --> Worker: Full track with isrc
+      Worker -> Worker: recording_key = isrc:ISRC; retain the\nlegacy spotify:id alias for immediate live removal
+    else 200 without an ISRC
+      Spotify --> Worker: Track has no usable isrc
+      Worker -> Worker: recording_key = spotify:{id}
+    else 404 — the track itself is gone
+      Spotify --> Worker: Not found
+      Worker -> Worker: recording_key = spotify:{id}\n(exact-id exclusion still recorded)
+    else Transient failure (5xx, network)
+      Spotify --> Worker: Error
+      Worker --> Browser: 503 — fail closed
+      note right of Worker #FFDDDD
+        Fail-closed: an uncertain identity is
+        never weakened into a weaker exclusion.
+        Nothing is stored and the candidate stays
+        visible until the owner can retry.
+      end note
+    end
+  end
+
+  Worker -> D1: INSERT OR IGNORE never_recordings\n(recording_key, isrc, spotify_id) — idempotent
+  Worker -> D1: Atomic serialized batch: remove the permanent key\nand any upgraded legacy alias; compact slot ranges + counters
+  Worker --> Browser: 200 { ok: true }
+  Browser -> Worker: GET /api/recommendation (next track)
+  Worker --> Browser: A different recommendation, if one is available
+end
+
+note over Worker,D1 #D9EAD3
+  Never Again is recording-wide and permanent: every rebuild
+  filters the recording key before materializing draw slots,
+  so a future rebuild that picks a different
+  representative (another pressing, the single edit)
+  cannot bring the song back.
+end note
+
+@enduml

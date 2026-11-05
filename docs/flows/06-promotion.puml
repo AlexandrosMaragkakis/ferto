@@ -1,0 +1,92 @@
+@startuml
+title Promotion, quarantine, and the second-low rule — v4
+
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+autonumber
+
+queue "Cloudflare Queue" as Queue
+control "Queue Consumer" as Consumer
+database "D1" as D1
+control "Recommendation API" as Recommendation
+
+Queue -> Consumer: Deliver the job in promote phase
+Consumer -> D1: Acquire the refresh lease
+Consumer -> D1: Count staged recordings; read\nlive_generation and pending_low
+
+note over Consumer,D1
+  Validated song batches may already have appended new eligible
+  recordings to the live shelf. The publication ledger excludes
+  this run's additions from the original similarity baseline,
+  and includes them in the run's final discovery yield.
+end note
+
+alt Staged generation is empty
+  Consumer -> D1: Record outcome "empty"; drop the job;\nkeep the live shelf exactly as it is
+  note right of Consumer
+    An empty rebuild never promotes over a
+    live shelf — visitors keep getting tracks.
+  end note
+
+else Nothing is live yet, staging nonempty
+  Consumer -> D1: Atomic D1 batch: rebuild dense draw slots;\nonly if a final slot still exists, register + flip\nlive_generation and exact counts; else outcome "empty"
+  Consumer -> Queue: ACK the final delivery
+
+else Live shelf exists
+  alt Staging shares at least half of the live recordings
+    Consumer -> D1: Atomically rebuild slots + conditionally promote\n(same final-nonempty batch as above);\nclear pending_low; outcome "promoted"
+    Consumer -> Queue: ACK the final delivery
+  else First completed miss below the floor
+    Consumer -> D1: Record outcome "quarantined";\nset pending_low=1; discard the staged generation;\nkeep the live shelf; drop the job
+    note right of Consumer
+      Quarantine protects the visitor from a
+      suspiciously disjoint rebuild (for example a
+      truncated crawl or a shifted library).
+    end note
+  else pending_low was already set (second completed miss)
+    Consumer -> D1: Atomically rebuild slots + conditionally promote\nregardless of similarity, but never if finally empty;\nclear pending_low; outcome "promoted"
+    Consumer -> Queue: ACK the final delivery
+    note right of Consumer
+      The second-low rule: if two consecutive
+      rebuilds agree that the shelf changed this
+      much, the change is real life, not a glitch.
+    end note
+  end
+end
+
+note over Consumer,D1 #D9EAD3
+  Fresh-install bootstrap exception: after liked songs and
+  playlist exclusions are frozen, the first nonempty artist
+  result is registered as live and may grow during this same
+  generation. Final promotion uses INSERT OR IGNORE for that
+  already-registered generation. This avoids an empty site
+  during a long first crawl. Later rebuilds append only new
+  eligible recordings from validated song batches; existing cards
+  stay unchanged until final replacement.
+end note
+
+== After every promotion ==
+
+Recommendation -> D1: Read the new generation's exact\nartist slot, then exact track slot
+D1 --> Recommendation: One eligible representative
+
+note over Consumer,D1 #FFF2CC
+  Final replacement is an atomic D1 batch. Earlier validated-batch
+  publications are also atomic batches and only add discoveries.
+  Replaced generations are not deleted —
+  every generation stays registered in
+  recording_generations with its recordings, so the old
+  snapshot remains stable and auditable.
+
+  Owner Like/Never decisions remain authoritative in their
+  separate tables. Their live draw slots are compacted on the
+  decision, and every later promotion filters them again inside
+  the same transaction as the final nonempty guard and live flip.
+
+  If the rebuild fails systemically at any phase, the
+  existing shelf and published additions remain available; pending_low is neither
+  cleared nor confirmed, and the failed job row stays
+  until the next Sunday 03:00 UTC tick replaces it.
+end note
+
+@enduml

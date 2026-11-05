@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="640" height="640">
+  <rect width="640" height="640" fill="#234f50"/>
+  <circle cx="320" cy="290" r="205" fill="#b8d1bd"/>
+  <circle cx="320" cy="290" r="149" fill="none" stroke="#234f50" stroke-width="2"/>
+  <circle cx="320" cy="290" r="118" fill="none" stroke="#234f50" stroke-width="2"/>
+  <circle cx="320" cy="290" r="87" fill="none" stroke="#234f50" stroke-width="2"/>
+  <circle cx="320" cy="290" r="27" fill="#234f50"/>
+  <path d="M105 495h430" stroke="#b8d1bd" stroke-width="2"/>
+  <text x="320" y="552" fill="#f6edda" font-family="system-ui, sans-serif" font-size="26" letter-spacing="4" text-anchor="middle">AN IMAGINARY EP</text>
+  <text x="320" y="590" fill="#b8d1bd" font-family="system-ui, sans-serif" font-size="17" letter-spacing="3" text-anchor="middle">DEMO ARTIST</text>
+</svg>

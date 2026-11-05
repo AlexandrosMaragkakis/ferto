@@ -1,0 +1,65 @@
+@startuml
+title Service-token bootstrap (local PKCE helper) — v4
+
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+autonumber
+
+actor Owner
+participant "spotify-authorize.mjs\n(npm run spotify:authorize)" as Helper
+participant "Loopback HTTP server\n127.0.0.1:port" as Loopback
+participant "Spotify Accounts" as Accounts
+participant "Spotify Web API" as Spotify
+database ".dev.vars\n(ignored)" as DevVars
+participant "npx wrangler\nsecret put" as Wrangler
+
+== Setup and authorization request ==
+
+Owner -> Helper: npm run spotify:authorize -- --local|--production
+Helper -> DevVars: Read SPOTIFY_CLIENT_ID, OWNER_SPOTIFY_ID\n(values are never printed)
+Helper -> Helper: Generate PKCE verifier + state\n(cryptographically random, 43 chars)
+Helper -> Helper: Derive S256 code challenge from the verifier
+Helper -> Loopback: Listen on 127.0.0.1 only\n(registered redirect URI http://127.0.0.1:port/callback)
+Helper --> Owner: Print authorize URL and try to open the browser\nscopes: user-library-read user-library-modify\nplaylist-read-private playlist-read-collaborative\nuser-read-private — exactly these, no playback scopes
+
+Owner -> Accounts: Open URL, sign in as the owner, approve
+Accounts --> Loopback: 302 http://127.0.0.1:port/callback?code&state
+
+== Validation and exchange (no client secret) ==
+
+Loopback -> Helper: Deliver the callback query
+Helper -> Helper: Validate state with a constant-time compare\n(single use; reject mismatch, replay, or error params)
+alt State mismatch, provider error, or missing code
+  Helper --> Owner: Fail safely — nothing stored
+else Callback is valid
+  Helper -> Accounts: POST /api/token\ngrant_type=authorization_code\ncode + code_verifier + client_id\n(**no client_secret**)
+  Accounts --> Helper: refresh_token + access_token + granted scope
+
+  Helper -> Helper: Verify granted scopes include all five service scopes
+  Helper -> Spotify: GET /v1/me (Bearer access_token)
+  Spotify --> Helper: Account identity
+
+  Helper --> Owner: Show the authenticated account\n(display name, immutable account_id, user id)
+  alt account_id is absent or not OWNER_SPOTIFY_ID
+    Helper --> Owner: Fail safely — nothing stored
+  else Configured owner (after --yes or a y/N prompt)
+    opt --local
+      Helper -> DevVars: Atomically rewrite only the\nSPOTIFY_REFRESH_TOKEN line\n(other entries preserved, mode 0600)
+      Helper --> Owner: Report success — the token value is never printed
+    end
+    opt --production
+      Helper -> Wrangler: spawn("npx", ["wrangler", "secret", "put",\n"SPOTIFY_REFRESH_TOKEN"])\nargv array, no shell
+      Helper -> Wrangler: Write the token to child stdin only
+      Wrangler --> Helper: Exit code
+      Helper --> Owner: Report success — the token value is never printed
+    end
+  end
+end
+
+note over Helper,Wrangler #FFF2CC
+  The refresh token never appears in the terminal, in argv,
+  or in a shell command line. The browser identity token
+  (flow 01) is a different token and is never written here.
+end note
+
+@enduml

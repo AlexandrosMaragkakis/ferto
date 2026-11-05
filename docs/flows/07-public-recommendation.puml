@@ -1,0 +1,69 @@
+@startuml
+title Public recommendation — v4
+
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+autonumber
+
+actor Visitor
+boundary "Browser SPA" as Browser
+control "FERTO Worker" as Worker
+database "D1" as D1
+
+Visitor -> Browser: Open the site / ask for another track
+Browser -> Worker: GET /api/recommendation\n[?exclude=currentTrackId]
+
+Worker -> D1: Read live generation + cached candidate\nand artist-bucket counts
+
+note right of D1
+  Promotion materializes dense integer slots after applying
+  never_recordings and rebuild_known_recordings. Like / Never compacts them
+  in one serialized D1 batch (concurrent removals cannot leave slot holes);
+  a stale externally-liked slot is removed lazily. Staging
+  generations are never selected.
+end note
+
+alt The exclude parameter is a valid Spotify track id
+  Worker -> Worker: Drop that one representative\nfor this request only
+  note right of Worker
+    Excluding the current track does not
+    shrink candidateCount and does not
+    persist: the next request can get it
+    again. Invalid values are ignored.
+  end note
+end
+
+Worker -> Worker: Draw an exact bucket_slot uniformly\n(artist buckets are equally likely,\nnot weighted by catalogue size)
+Worker -> D1: Read that single bucket row\n(bucket_artist_id + track_count)
+Worker -> Worker: Draw an exact track_slot uniformly\ninside that artist's bucket
+Worker -> D1: Read that single recording row
+D1 --> Worker: One representative row
+
+note over Worker,D1 #D9EAD3
+  The public path never runs COUNT, DISTINCT, or
+  ORDER BY RANDOM() across the catalogue. Its D1 rows
+  read stay constant as the shelf grows.
+end note
+
+Worker --> Browser: 200 JSON with exactly:\n{ recommendation: { spotify_id, title,\nartists (ordered), album_name, image_url,\nspotify_url }, candidateCount }
+note over Worker #D9EAD3
+  The response exposes no refresh internals and no
+  internal identity (no ISRC, no recording key,
+  no generation). Visitors are strictly read-only:
+  there is no public write endpoint.
+end note
+
+Browser -> Browser: Render the official Spotify\ncompact embed + open.spotify.com link
+Browser --> Visitor: Show the recommendation
+
+alt Shelf empty or fully filtered
+  Worker --> Browser: { recommendation: null, candidateCount }
+  Browser --> Visitor: Friendly "check back soon" state
+end
+
+note over Browser,Visitor #FFF2CC
+  There is no custom playback: audio plays through
+  Spotify's own embedded player only.
+end note
+
+@enduml

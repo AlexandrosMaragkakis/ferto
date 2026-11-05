@@ -1,0 +1,162 @@
+@startuml
+title Catalogue discovery crawl — v4
+
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+autonumber
+
+control "Queue Consumer" as Consumer
+participant "Spotify Web API" as Spotify
+database "D1 rebuild tables" as D1
+
+note over Consumer, D1
+  Up to eight artists rotate by persisted turn count. Admission favours
+  artists missing from the live shelf and already-started discovery;
+  completion admits the next artist. After quota waits, queued song/release
+  work takes precedence over cold release lists.
+  One turn handles one page
+  or at most five uncached metadata requests while artists compete.
+  Cache hits may fill 30-track batches; the last artist can use a full batch.
+  Artist cursors and unfinished ids survive yields and quota waits.
+  Identity lasts 30 days; daily album availability is independently refreshed.
+  Missing flags or changed returned ids require a full track lookup.
+end note
+
+== Preflight (service token) ==
+
+Consumer -> Spotify: Grant SPOTIFY_REFRESH_TOKEN\n(PKCE refresh_token + client_id form)
+Spotify --> Consumer: Access token + granted scope
+Consumer -> D1: Store only encrypted access token until near expiry;\nreuse across later deliveries, renew once on 401
+Consumer -> Consumer: Require all five service scopes\n(missing scope → systemic fail)
+Consumer -> Spotify: GET /v1/me
+Spotify --> Consumer: Owner profile (immutable account_id,\nmutable user id; country optional)
+
+alt account_id is not the configured OWNER_SPOTIFY_ID
+  Consumer -> D1: Mark job failed, outcome "failed"\nlive shelf untouched
+else Owner confirmed
+  Consumer -> D1: phase=never_identities, capture user id for playlist ownership,\noptional market=owner country; when absent Spotify\napplies the user token country; initial page gap 2s
+
+  == Resolve permanent exact-id Never decisions ==
+
+  loop Up to 30 unresolved exact ids per delivery
+    Consumer -> Spotify: GET /v1/tracks/{originalNeverId}?market
+    Spotify --> Consumer: Full track + external_ids (possibly a\ndifferent market-playable id; no linked_from in Dev Mode)
+    Consumer -> D1: Match the requested id to the returned ISRC;\nmark checked for this rebuild atomically
+  end
+  Consumer -> D1: Retry unresolved 403/404/no-ISRC ids next week;\nphase=seeds only after this gate drains
+
+  == Seed freezing from liked songs ==
+
+  loop Each liked-tracks page (limit 50)
+    Consumer -> Spotify: GET /v1/me/tracks?limit=50&cursor
+    Spotify --> Consumer: Saved-track page + next cursor
+    Consumer -> D1: Freeze only the first credited artist\nof each liked track into rebuild_seed_artists;\nalso freeze liked recording keys as known
+  end
+
+  == Freeze playlist exclusions before discovery ==
+
+  loop Each owner-playlists page (limit 50)
+    Consumer -> Spotify: GET /v1/me/playlists?limit=50&cursor
+    Spotify --> Consumer: Playlists with owner ids and collaborative flags
+    Consumer -> D1: Queue owned and collaborative playlists\nwith snapshot_id; mark verified unchanged versions for reuse
+  end
+
+  loop Each queued playlist, page by page
+    alt Completed snapshot matches fresh discovery
+      Consumer -> D1: Copy cached exact ids and recording exclusions\nwithout reading playlist items
+    else Changed or missing snapshot
+    Consumer -> Spotify: GET /v1/playlists/{id}/items?limit=50&cursor
+    Spotify --> Consumer: Playlist items in the current item field
+    Consumer -> D1: Record each item's recording key\nin rebuild_known_recordings
+    Consumer -> Spotify: After final page, verify snapshot_id
+    Consumer -> D1: Publish cache only if version matches;\nthen delete playlist work row
+    end
+  end
+
+  == Incremental artist discovery ==
+
+  loop Each seed artist (paged, include album + single)
+    Consumer -> Spotify: GET /v1/artists/{id}/albums\ninclude_groups=album,single&limit=10&market
+    alt 200
+      Spotify --> Consumer: Album and single releases + cursor
+      Consumer -> D1: Queue each release in rebuild_album_queue\nwith the bucket artist id
+    else 404 artist vanished
+      Spotify --> Consumer: Not found
+      Consumer -> D1: Aggregate warning artistsUnavailable;\ndelete completed artist work row
+    end
+
+    loop That artist's queued releases
+      Consumer -> D1: Try owner/market-scoped discovery page (30 days);\nfetch missing/expired availability pages (1 day) and every new album id
+      Consumer -> Spotify: GET /v1/albums/{id}/tracks?market (market optional)
+      Spotify --> Consumer: Simplified tracks
+      Consumer -> D1: Filter confirmed known ids, then split remaining ids\ninto enrichment batches of ≤30 in rebuild_enrich_queue
+      Consumer -> D1: Delete release work row after its final page
+    end
+
+    loop Each enrichment batch (max 30 external reads)
+      Consumer -> D1: Read fresh 24h full metadata or combine\n30-day identity with fresh daily availability\n(owner account + market + requested id)
+      Consumer -> Spotify: GET /v1/tracks/{id}\nin groups of at most 5 concurrent requests
+      Spotify --> Consumer: Full tracks with external_ids
+      Consumer -> D1: Cache successful metadata and checkpoint completed ids\neven if another request fails; retry only unfinished ids
+      Consumer -> Consumer: Strict playability gate:\nis_playable=true, not local, complete metadata
+      Consumer -> D1: Map to recordings and keep one\nrepresentative per recording (flow 05)
+      Consumer -> D1: Atomically publish newly eligible batch recordings\ninto an existing shelf with ledger + slots + counts;\nkeep earlier public representatives unchanged
+    end
+
+    Consumer -> D1: If this is the first nonempty shelf,\nregister it live and append dense draw slots;\ncontinue growing it safely
+    Consumer -> D1: On legacy artist completion, atomically append\nany remaining eligible staged recordings + ledger;\nkeep existing cards and representatives unchanged
+  end
+
+  == Final authoritative liked scan ==
+
+  loop Final authoritative liked scan
+    Consumer -> Spotify: GET /v1/me/tracks?limit=50&cursor
+    Spotify --> Consumer: Saved-track page
+    Consumer -> D1: Record liked recording keys\nin rebuild_known_recordings
+  end
+
+  Consumer -> D1: phase=promote (see flow 06)
+end
+
+note over Consumer,Spotify #FFF2CC
+  Pacing and retries on every Spotify call above:
+  · pages start at 2 seconds; 30 track requests wait
+    at least 30 seconds. Durable next_read_at and delayed
+    queue sends enforce the adaptive request budget.
+    Rolling 429s increase pacing and reduce concurrency;
+    20 clean units gradually reduce the penalty.
+  · rolling 429 → wait exactly Retry-After, no retry
+    attempt consumed, work preserved
+  · Development Mode QUOTA_EXCEEDED → save progress, honor Retry-After;
+    without timing, retry one metadata request after 15m, up to 6h backoff
+  · Progress counters commit with cursors; show artists, song checks,
+    cache/known skips and recorded refresh requests even while waiting
+  · 5xx → persisted exponential backoff (30s, 60s, …),
+    after 5 attempts pause 1h, then resume the same work
+  · other 4xx → systemic fail
+  A systemic fail keeps the live shelf and the failed job
+  row intact; the next Sunday 03:00 UTC tick starts a
+  fresh generation.
+end note
+
+note over Consumer,D1 #D9EAD3
+  On a fresh install the liked and playlist exclusion sets
+  are frozen first. The first eligible artist then becomes a
+  usable, growing live shelf instead of making visitors wait
+  for the entire multi-day crawl. Existing installations gain
+  new eligible recordings with each validated song batch. Both generations'
+  known filters and Never decisions apply in the same transaction.
+  Final replacement keeps its original overlap baseline and gates.
+  During provider waits, bounded database-only publication can expose
+  already validated staging without Spotify calls or clearing retry gates.
+end note
+
+note over Consumer,D1 #D9EAD3
+  Full 50-item Spotify pages use chunked multi-row INSERTs.
+  Enrichment is capped at 30 tracks per delivery. Together
+  these keep every unit below D1 Free's 50-query ceiling.
+  Completed/skipped work rows are deleted immediately, so
+  pending selection never scans a growing completed prefix.
+end note
+
+@enduml

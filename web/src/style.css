@@ -1,0 +1,422 @@
+@property --ambient {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #e8dce7;
+}
+
+@property --ambient-soft {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #f5eef1;
+}
+
+:root {
+  color-scheme: light;
+  --paper: #f5f2f5;
+  --panel: #fcf9fa;
+  --ink: #211b24;
+  --line: #463d4b;
+  --muted: #62576b;
+  --focus: #71416d;
+  --accent: #4d354c;
+  --accent-ink: #ffffff;
+  --accent-edge: #392738;
+  --ambient: #e8dce7;
+  --ambient-soft: #f5eef1;
+  --control: #eee7ee;
+  --control-edge: #c8bbc9;
+  --control-ink: #302734;
+  transition: --ambient 360ms ease, --ambient-soft 360ms ease;
+}
+
+:root.dark {
+  color-scheme: dark;
+  --paper: #0d0b10;
+  --panel: #100c12;
+  --ink: #f6f0e6;
+  --line: #d3c5d7;
+  --muted: #c0adc9;
+  --focus: #e5cde7;
+  --accent: #f5ecdc;
+  --accent-ink: #17121a;
+  --accent-edge: #e5d6c5;
+  --ambient: #37151d;
+  --ambient-soft: #21101a;
+  --control: #241b27;
+  --control-edge: #71505b;
+  --control-ink: #f3eaf4;
+}
+
+* { box-sizing: border-box; }
+html { min-width: 320px; background: var(--paper); }
+[hidden] { display: none !important; }
+
+body {
+  display: grid;
+  min-height: 100vh;
+  min-height: 100svh;
+  margin: 0;
+  padding: 40px 32px;
+  place-items: center;
+  isolation: isolate;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Inter", "Avenir Next", Avenir, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+body::before {
+  position: fixed;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 15% 24%, color-mix(in srgb, var(--ambient) 45%, transparent), transparent 62%),
+    radial-gradient(ellipse at 85% 85%, var(--ambient-soft), transparent 65%);
+  content: "";
+}
+
+button, a { font: inherit; -webkit-tap-highlight-color: transparent; }
+button { touch-action: manipulation; }
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.app-shell {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 1180px);
+  min-height: min(950px, calc(100svh - 80px));
+  padding: 36px 40px 24px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--line) 5%, transparent);
+  border-radius: 20px;
+  background: var(--panel);
+  box-shadow: 0 24px 80px rgb(0 0 0 / 10%);
+}
+
+.app-shell::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 15% 28%, var(--ambient), transparent 66%),
+    radial-gradient(ellipse at 65% 90%, var(--ambient-soft), transparent 55%);
+  content: "";
+}
+
+.topbar {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.brand {
+  color: var(--ink);
+  font-size: 27px;
+  font-weight: 750;
+  line-height: 1;
+  letter-spacing: .22em;
+  text-decoration: none;
+}
+
+.header-actions { display: flex; align-items: center; gap: 20px; }
+.owner-link, .icon-button {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  padding: 10px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.owner-link svg, .icon-button svg, .external-icon {
+  display: block;
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+:root.dark .theme-moon, :root:not(.dark) .theme-sun { display: none; }
+.owner-link:hover, .icon-button:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); }
+
+.recommendation {
+  display: grid;
+  grid-template-columns: minmax(0, .9fr) minmax(0, 1.25fr);
+  align-items: center;
+  gap: 44px 52px;
+  width: 100%;
+  margin: 40px 0 0;
+}
+
+.art-frame {
+  display: grid;
+  width: min(100%, 460px);
+  aspect-ratio: 1;
+  justify-self: start;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--line) 15%, transparent);
+  border-radius: 8px;
+  background: var(--control);
+  box-shadow: 0 18px 44px rgb(0 0 0 / 28%);
+}
+
+.art-frame > * { grid-area: 1 / 1; }
+.art-frame img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.art-placeholder {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  align-content: center;
+  justify-items: center;
+  gap: 14px;
+  color: var(--muted);
+}
+.art-placeholder b { font-size: 48px; font-weight: 400; line-height: 1; }
+.art-placeholder small { font-size: 10px; font-weight: 500; letter-spacing: .12em; }
+
+.track-details { min-width: 0; }
+h1 {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: clamp(32px, 3.5vw, 48px);
+  font-weight: 720;
+  line-height: 1.13;
+  letter-spacing: -.035em;
+  text-wrap: balance;
+}
+.artist {
+  margin: 12px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: clamp(24px, 2.6vw, 34px);
+  font-weight: 400;
+  line-height: 1.3;
+  letter-spacing: -.015em;
+}
+.album {
+  margin: 12px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: .16em;
+}
+
+.embed {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  margin-top: 30px;
+}
+.embed-placeholder, .embed iframe {
+  grid-area: 1 / 1;
+  display: block;
+  width: 100%;
+  /* Keep Spotify's actual compact document at its native 80px height. */
+  height: 80px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 12px;
+  background: var(--control);
+}
+.embed-placeholder {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: .04em;
+}
+.embed-frame-loading { visibility: hidden; }
+.embed-link {
+  display: flex;
+  grid-column: 1;
+  grid-row: 2;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 36px;
+  margin: 13px auto 0;
+  align-items: center;
+  gap: 9px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  text-decoration: none;
+}
+.embed-link span { text-decoration: underline; text-underline-offset: 4px; text-decoration-thickness: 1px; }
+.spotify-logo { flex: 0 0 92px; width: 92px; height: 26px; object-fit: contain; }
+:root.dark .spotify-logo-light, :root:not(.dark) .spotify-logo-dark { display: none; }
+.external-icon { flex: 0 0 14px; width: 14px; height: 14px; }
+.embed-help { grid-column: 1; grid-row: 3; margin-top: 8px; color: var(--muted); font-size: 12px; line-height: 1.6; text-align: center; }
+.embed-help summary { width: fit-content; margin: auto; padding: 6px; cursor: pointer; }
+.embed-help p { max-width: 40ch; margin: 8px auto 0; }
+.embed-help button { padding: 4px 2px; border: 0; background: transparent; color: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+
+.actions {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 58px;
+  margin: 18px 0 0;
+}
+.action {
+  display: flex;
+  min-width: 110px;
+  padding: 0 4px 4px;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  border: 0;
+  border-radius: 16px;
+  background: transparent;
+  color: var(--control-ink);
+  cursor: pointer;
+}
+.action-disc {
+  display: grid;
+  width: 94px;
+  height: 94px;
+  place-items: center;
+  border: 1px solid var(--control-edge);
+  border-radius: 50%;
+  background: var(--control);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 8%);
+}
+.action-disc svg {
+  width: 38px;
+  height: 38px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.action-label { color: var(--muted); font-size: 12px; font-weight: 450; line-height: 1; letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; }
+.another .action-disc {
+  width: 112px;
+  height: 112px;
+  border-color: var(--accent-edge);
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 0 0 48px color-mix(in srgb, var(--ambient) 55%, transparent), 0 8px 26px rgb(0 0 0 / 12%);
+}
+.another .action-disc svg { width: 48px; height: 48px; stroke-width: 3; }
+.another .action-label { color: var(--ink); font-weight: 650; }
+.action:disabled { cursor: not-allowed; }
+.action:disabled .action-disc { opacity: .5; }
+.action:hover:not(:disabled) .action-disc { transform: translateY(-3px); border-color: var(--control-ink); }
+.another:hover:not(:disabled) .action-disc { border-color: var(--accent); box-shadow: 0 0 58px color-mix(in srgb, var(--ambient) 75%, transparent), 0 12px 30px rgb(0 0 0 / 18%); }
+.action:active:not(:disabled) .action-disc { transform: scale(.96); }
+
+button:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 6px; }
+.status, .refresh-status { color: var(--muted); font-size: 13px; line-height: 1.6; text-align: center; }
+.status { grid-column: 1 / -1; margin: -12px 0 0; }
+.status:empty { display: none; }
+.action-help { grid-column: 1 / -1; max-width: 52ch; margin: -20px auto 0; color: var(--muted); font-size: 12px; line-height: 1.6; text-align: center; }
+.refresh-status { margin: 0; }
+footer {
+  margin-top: auto;
+  padding-top: 48px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.5;
+  text-align: center;
+  letter-spacing: .03em;
+}
+footer::before {
+  display: block;
+  height: 1px;
+  margin-bottom: 18px;
+  background: color-mix(in srgb, var(--line) 16%, transparent);
+  content: "";
+}
+footer a { color: inherit; text-underline-offset: 3px; }
+.footer-copy { margin: 0; font-size: 12px; }
+.about { max-width: 62ch; margin: 8px auto 0; }
+.about summary { width: fit-content; margin: auto; padding: 8px; cursor: pointer; }
+.about p { margin: 12px 0 0; font-size: 12px; line-height: 1.7; text-align: left; letter-spacing: normal; }
+
+body, .app-shell, .brand, .owner-link, .icon-button, .art-frame, .action,
+.action-disc, .action-label, .artist, .album, .embed-placeholder, .embed-link,
+.status, .refresh-status, footer, .owner-panel, .owner-panel button {
+  transition: background-color 280ms ease, color 280ms ease, border-color 280ms ease, box-shadow 280ms ease, transform 180ms ease;
+}
+
+@media (min-width: 768px) and (max-height: 820px) {
+  body { padding-block: 24px; }
+  .app-shell { min-height: calc(100svh - 48px); padding-top: 24px; }
+  .recommendation { margin-top: 28px; row-gap: 28px; }
+  .art-frame { width: min(100%, 46svh); }
+  .actions { margin-top: 0; }
+  .action { gap: 15px; }
+  .action-disc { width: 78px; height: 78px; }
+  .another .action-disc { width: 94px; height: 94px; }
+  footer { padding-top: 32px; }
+}
+
+@media (max-width: 767px) {
+  body { padding: 12px; }
+  .app-shell { width: min(100%, 460px); min-height: calc(100svh - 24px); padding: 22px 16px 18px; border-radius: 18px; }
+  .topbar { min-height: 36px; gap: 16px; }
+  .brand { font-size: 22px; }
+  .header-actions { gap: 9px; }
+  .owner-link, .icon-button { width: 38px; height: 38px; padding: 8px; }
+  .recommendation { grid-template-columns: minmax(0, 1fr); row-gap: 24px; margin-top: 26px; }
+  .art-frame { width: min(100%, 32svh, 280px); justify-self: center; border-radius: 4px; }
+  .track-details { text-align: center; }
+  h1 { font-size: 23px; line-height: 1.2; letter-spacing: -.025em; }
+  .artist { margin-top: 7px; font-size: 18px; line-height: 1.3; }
+  .album { margin-top: 5px; font-size: 11px; line-height: 1.5; letter-spacing: .12em; }
+  .embed { margin-top: 22px; text-align: left; }
+  .embed-link { min-height: 30px; margin-top: 10px; font-size: 11px; }
+  .external-icon { flex-basis: 13px; width: 13px; height: 13px; }
+  .actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 4px; }
+  .action { min-width: 0; width: 100%; padding-inline: 0; gap: 16px; }
+  .action-disc { width: clamp(58px, 18vw, 76px); height: clamp(58px, 18vw, 76px); }
+  .action-disc svg { width: 29px; height: 29px; stroke-width: 2.3; }
+  .another .action-disc { width: clamp(74px, 22vw, 92px); height: clamp(74px, 22vw, 92px); }
+  .another .action-disc svg { width: 38px; height: 38px; stroke-width: 2.8; }
+  .action-label { font-size: 10px; letter-spacing: .06em; }
+  .status { margin-top: 0; font-size: 12px; }
+  .action-help { margin-top: -10px; font-size: 11px; }
+  footer { padding-top: 32px; font-size: 10px; }
+  footer::before { margin-bottom: 14px; }
+}
+
+@media (max-width: 767px) and (max-height: 740px) {
+  .app-shell { padding-top: 16px; }
+  .recommendation { margin-top: 20px; row-gap: 20px; }
+  .art-frame { width: min(100%, 29svh, 230px); }
+  .embed { margin-top: 18px; }
+  .action { gap: 12px; }
+  footer { padding-top: 24px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}

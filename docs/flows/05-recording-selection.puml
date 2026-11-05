@@ -1,0 +1,48 @@
+@startuml
+title Recording dedupe and representative selection — v4
+
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+autonumber
+
+control "Queue Consumer" as Consumer
+participant "Spotify Web API" as Spotify
+database "D1 recordings\n(private staging)" as D1
+
+== Identity ==
+
+Consumer -> Spotify: GET /v1/tracks/{id} (full object)\n≤30 reads per queue delivery, ≤5 concurrent
+Spotify --> Consumer: Tracks with external_ids.isrc,\nrelease dates, artwork, credits
+
+Consumer -> Consumer: Normalize the ISRC\n(strip separators, uppercase; invalid → none)
+Consumer -> Consumer: recording_key =\nisrc:ISRC when confirmed, else spotify:{id}
+
+note right of Consumer
+  Different pressings, singles, and re-issues of
+  one song usually share an ISRC and collapse
+  into a single recording. Without a confirmed
+  ISRC the exact Spotify id is the identity.
+end note
+
+== Eligibility ==
+
+Consumer -> Consumer: Keep only strictly playable tracks:\nSpotify affirms is_playable, not is_local,\nand id/name/album/first artist/URL present
+
+== Dedupe and representative choice ==
+
+Consumer -> Consumer: Group survivors by recording_key
+loop Each recording group
+  Consumer -> Consumer: Pick one representative:\n1. earliest release date\n   (partial dates order before later ones;\n   unknown or malformed dates sort last)\n2. then prefer having artwork\n3. then the smaller Spotify id
+  Consumer -> D1: INSERT OR IGNORE the representative row\n(recording_key, spotify_id, isrc, title, album,\nrelease_date, image_url, ordered artists_json,\nbucket_artist_id = first credited artist)
+end
+
+Consumer -> D1: Staged rows are private:\nno live_generation points here yet
+
+note over Consumer,D1 #D9EAD3
+  The bucket artist is the first credited artist of the
+  representative. It drives the uniform artist draw of
+  the public recommendation (flow 07), so a prolific
+  artist cannot flood the shelf relative to a sparse one.
+end note
+
+@enduml
