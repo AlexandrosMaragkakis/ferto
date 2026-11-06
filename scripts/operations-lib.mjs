@@ -94,7 +94,7 @@ export function activeDeployment(deployments) {
   return latest;
 }
 
-export async function queueState(target, logDirectory) {
+async function accountCredentials(target, logDirectory) {
   let account = process.env.CLOUDFLARE_ACCOUNT_ID || target.config.account_id;
   if (!account) {
     const identity = await wranglerJson(["whoami"], { configFile: target.configFile, logFile: join(logDirectory, "identity.log") });
@@ -112,7 +112,45 @@ export async function queueState(target, logDirectory) {
       if (token) break;
     }
   }
-  if (!token) throw new Error("Queue status needs Wrangler OAuth login or a scoped CLOUDFLARE_API_TOKEN");
+  if (!token) throw new Error("Operational checks need Wrangler OAuth login or a scoped CLOUDFLARE_API_TOKEN");
+  return { account, token };
+}
+
+export async function dailyD1Usage(target, logDirectory, checkedAt = new Date()) {
+  const { account, token } = await accountCredentials(target, logDirectory);
+  const date = checkedAt.toISOString().slice(0, 10);
+  // No database filter: the Free allowance is shared by every database in the
+  // account. A UTC-day aggregate must not be replaced with rolling 24h totals.
+  const query = `query DailyD1Usage($accountTag:string!,$start:Date!){viewer{accounts(filter:{accountTag:$accountTag}){
+    d1AnalyticsAdaptiveGroups(limit:1,filter:{date_geq:$start,date_leq:$start}){sum{rowsRead rowsWritten}}
+  }}}`;
+  const response = await fetch("https://api.cloudflare.com/client/v4/graphql", {
+    method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ query, variables: { accountTag: account, start: date } }),
+    signal: AbortSignal.timeout(20_000), redirect: "error",
+  });
+  if (!response.ok) { await response.body?.cancel(); throw new Error("Daily D1 analytics request failed; check Account Analytics Read access"); }
+  const result = await response.json();
+  const accounts = result.data?.viewer?.accounts;
+  const rows = accounts?.[0]?.d1AnalyticsAdaptiveGroups;
+  if (result.errors?.length || accounts?.length !== 1 || !Array.isArray(rows) || rows.length > 1) throw new Error("Daily D1 analytics could not be confirmed");
+  const sum = rows.length ? rows[0]?.sum : { rowsRead: 0, rowsWritten: 0 };
+  if (!sum || [sum.rowsRead, sum.rowsWritten].some(value => !Number.isSafeInteger(value) || value < 0)) throw new Error("Daily D1 analytics returned invalid row totals");
+  return { date, scope: "account", rowsRead: sum.rowsRead, rowsWritten: sum.rowsWritten,
+    freeReadLimit: 5_000_000, freeWriteLimit: 100_000,
+    resetAt: new Date(Date.parse(`${date}T00:00:00Z`) + 86400000).toISOString() };
+}
+
+export function dailyD1Warnings(usage) {
+  const warnings = [];
+  for (const [kind, amount, limit] of [["reads", usage.rowsRead, usage.freeReadLimit], ["writes", usage.rowsWritten, usage.freeWriteLimit]]) {
+    if (amount >= limit * 0.8) warnings.push(`Daily account D1 ${kind}: ${amount.toLocaleString("en-US")} / ${limit.toLocaleString("en-US")} (Free allowance). Reset: ${usage.resetAt}. Reduce background work; analytics may lag.`);
+  }
+  return warnings;
+}
+
+export async function queueState(target, logDirectory) {
+  const { account, token } = await accountCredentials(target, logDirectory);
   const get = async path => {
     const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}${path}`, {
       headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(20_000), redirect: "error",

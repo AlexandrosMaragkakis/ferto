@@ -96,9 +96,15 @@ npm run release:smoke -- --artifact /path/to/the/deployed/release/.release
 
 Status reports active Worker UUID, D1 size against the assumed Free limit,
 Queue pause state, catalogue/job progress and latest default local backup. It
-returns a nonzero status for paused delivery, failed/overdue work, old/missing
-backups or storage above 75%. A planned Spotify retry is taken into account so
-quota waiting is not mistaken for a stalled job. Reports are private under
+also queries account-wide D1 reads/writes for the current UTC day and prints the
+next UTC reset. At 80% of either Free daily allowance it warns; database size
+and rolling 24-hour totals do not establish daily headroom. Analytics can lag.
+It returns a nonzero status for paused delivery, failed/overdue work, old/missing
+backups, storage above 75%, daily reads/writes at or above 80%, or unavailable
+daily analytics. A planned Spotify retry is taken into account so
+quota waiting is not mistaken for a stalled job. Daily analytics access requires
+Account Analytics Read (already included in the CI deployment-token setup).
+Reports are private under
 `.local/operations/`. It uses standard Wrangler OAuth login, or an explicitly
 scoped API token/account supplied by the operator. Multiple accounts require
 `CLOUDFLARE_ACCOUNT_ID`; no authentication values are printed.

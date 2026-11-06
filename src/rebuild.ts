@@ -1646,14 +1646,25 @@ function gateDelaySeconds(job: Pick<RebuildJobRow, "retry_at" | "next_read_at">)
  * no Spotify/token calls and cannot advance a source cursor or clear a gate. */
 async function publishWaitingBatch(env: Env, job: RebuildJobRow): Promise<boolean> {
   if (!PUBLICATION_PHASES.includes(job.phase)) return false;
+  if (job.lease_until !== null && job.lease_until > now()) return false;
   let afterArtist = '', afterKey = '';
   try {
     const progress = JSON.parse(job.progress_json) as Record<string, unknown>;
-    if (typeof progress.publicationAfterArtist === 'string' && typeof progress.publicationAfterKey === 'string') {
-      afterArtist = progress.publicationAfterArtist; afterKey = progress.publicationAfterKey;
+    const scan = progress.publicationScan as Record<string, unknown> | null;
+    if (scan && typeof scan === 'object' && scan.revision === job.revision) {
+      if (scan.exhausted === true) return false;
+      if (typeof scan.afterArtist === 'string' && typeof scan.afterKey === 'string') {
+        afterArtist = scan.afterArtist; afterKey = scan.afterKey;
+      }
     }
   } catch { /* Malformed progress starts a harmless idempotent publication pass. */ }
-  const rows = await env.DB.prepare(`SELECT s.live_generation,r.bucket_artist_id,r.recording_key
+  // Every successful/failed source unit advances the revision. Until then,
+  // staged work cannot grow during a provider gate, so an empty pass is durable.
+  // Lease before scanning: duplicates must not repeat the expensive read while
+  // another invocation is publishing or advancing the same revision.
+  if (!await acquireLease(env, job)) return false;
+  try {
+    const rows = await env.DB.prepare(`SELECT s.live_generation,r.bucket_artist_id,r.recording_key
     FROM refresh_state s JOIN recordings r ON r.generation=?
     WHERE s.singleton=1 AND s.live_generation IS NOT NULL AND s.live_generation<>r.generation
       AND r.bucket_artist_id>=? AND (r.bucket_artist_id>? OR r.recording_key>?)
@@ -1663,24 +1674,24 @@ async function publishWaitingBatch(env: Env, job: RebuildJobRow): Promise<boolea
       AND NOT EXISTS(SELECT 1 FROM rebuild_known_recordings k WHERE k.generation=s.live_generation AND k.recording_key=r.recording_key)
     ORDER BY r.bucket_artist_id,r.recording_key LIMIT ?`).bind(job.generation, afterArtist, afterArtist, afterKey, ENRICH_BATCH_LIMIT)
     .all<{ live_generation: string; bucket_artist_id: string; recording_key: string }>();
-  const first = rows.results[0];
-  if (!first || !await acquireLease(env, job)) return false;
-  const keys = rows.results.filter(row => row.bucket_artist_id === first.bucket_artist_id).map(row => row.recording_key);
-  try {
+    const first = rows.results[0];
+    const keys = first ? rows.results.filter(row => row.bucket_artist_id === first.bucket_artist_id).map(row => row.recording_key) : [];
+    const scan = { revision: job.revision, afterArtist: first?.bucket_artist_id ?? afterArtist,
+      afterKey: keys.at(-1) ?? afterKey, exhausted: !first };
     await env.DB.batch([
-      ...artistPublicationStatements(env, job, first.live_generation, first.bucket_artist_id, keys),
+      ...(first ? artistPublicationStatements(env, job, first.live_generation, first.bucket_artist_id, keys) : []),
       env.DB.prepare(`UPDATE rebuild_jobs SET lease_until=NULL,
-        progress_json=json_set(progress_json,'$.publicationAfterArtist',?,'$.publicationAfterKey',?)
+        progress_json=json_set(progress_json,'$.publicationScan',json(?))
         WHERE singleton=1 AND ${JOB_MUTATION_GUARD}`)
-        .bind(first.bucket_artist_id, keys.at(-1)!, ...jobMutationBindings(job)),
+        .bind(JSON.stringify(scan), ...jobMutationBindings(job)),
     ]);
+    return Boolean(first);
   } catch (error) {
     // Do not leave a lease behind after an ordinary rolled-back write error.
     await env.DB.prepare(`UPDATE rebuild_jobs SET lease_until=NULL WHERE singleton=1 AND ${JOB_MUTATION_GUARD}`)
       .bind(...jobMutationBindings(job)).run();
     throw error;
   }
-  return true;
 }
 
 function validMessage(value: unknown): value is RefreshMessage {

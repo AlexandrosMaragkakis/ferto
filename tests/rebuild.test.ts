@@ -23,6 +23,7 @@ import identityAvailabilityMigration from "../migrations/0019_identity_availabil
 import operationalHistoryMigration from "../migrations/0020_operational_history.sql?raw";
 import progressivePublicationMigration from "../migrations/0021_progressive_artist_publication.sql?raw";
 import oauthProtectionMigration from "../migrations/0022_oauth_browser_binding_and_budgets.sql?raw";
+import neverIsrcMigration from "../migrations/0023_never_isrc_lookup.sql?raw";
 import worker from "../src/worker";
 import { startRebuild, scheduledTick, startOrWakeRebuild, nextWeeklyCronAt, statusSnapshot, WATCHDOG_CRON_EXPRESSION, rebuildRecommendationPool, type RefreshMessage, type RefreshPhase } from "../src/rebuild";
 import { statements } from "./statements";
@@ -186,7 +187,7 @@ const fullTrack = (id: string, overrides: Record<string, unknown> = {}) => ({
 
 describe("v4 rebuild state machine", () => {
   beforeAll(async () => {
-    const sql = [initialMigration, stagingMigration, incrementalMigration, leaseMigration, playlistSkipMigration, refreshAlgorithmMigration, backgroundRefreshMigration, spotifyWaitReasonMigration, v4Migration, identityAndSlotsMigration, atomicPoolMigration, legacyNeverIdentityMigration, neverIdentityChecksMigration, restartReroutedRebuildMigration, preservePreflightGateMigration, resumableQuotaMigration, incrementalDiscoveryMigration, refreshProgressMigration, identityAvailabilityMigration, operationalHistoryMigration, progressivePublicationMigration, oauthProtectionMigration].join("\n");
+    const sql = [initialMigration, stagingMigration, incrementalMigration, leaseMigration, playlistSkipMigration, refreshAlgorithmMigration, backgroundRefreshMigration, spotifyWaitReasonMigration, v4Migration, identityAndSlotsMigration, atomicPoolMigration, legacyNeverIdentityMigration, neverIdentityChecksMigration, restartReroutedRebuildMigration, preservePreflightGateMigration, resumableQuotaMigration, incrementalDiscoveryMigration, refreshProgressMigration, identityAvailabilityMigration, operationalHistoryMigration, progressivePublicationMigration, oauthProtectionMigration, neverIsrcMigration].join("\n");
     for (const statement of statements(sql)) await env.DB.prepare(statement).run();
   });
   beforeEach(async () => {
@@ -1791,6 +1792,68 @@ describe("v4 rebuild state machine", () => {
       expect((await statusSnapshot(env)).candidateCount).toBe(5);
       await deliver({ generation, revision: 0 }, testEnv);
       expect((await statusSnapshot(env)).progress).toMatchObject({ publishedRecordings: 4, publishedArtists: 2 });
+    });
+
+    it('remembers an exhausted waiting pass so duplicate cooldown wakes do not rescan the catalogue', async () => {
+      const generation = 'waiting-empty-pass';
+      const testEnv = await publicationFixture(generation);
+      await env.DB.prepare('UPDATE rebuild_jobs SET retry_at=?').bind(Date.now() + 86400000).run();
+      const scans = vi.fn();
+      const database = new Proxy(testEnv.DB, { get(target, key) {
+        if (key === 'prepare') return (sql: string) => {
+          if (sql.includes('FROM refresh_state s JOIN recordings r')) scans();
+          return target.prepare(sql);
+        };
+        const value = Reflect.get(target, key, target) as unknown;
+        return typeof value === 'function' ? value.bind(target) : value;
+      } });
+      vi.stubGlobal('fetch', vi.fn(() => { throw new Error('No Spotify calls while waiting'); }));
+      const before = await jobRow(generation);
+      for (let index = 0; index < 5; index++) await deliver({ generation, revision: 0 }, { ...testEnv, DB: database });
+      expect(scans).toHaveBeenCalledTimes(2); // One publication, one empty pass, then singleton-only wakes.
+      expect((await statusSnapshot(env)).candidateCount).toBe(2);
+      expect(await jobRow(generation)).toEqual(before);
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('restarts an exhausted waiting scan after a source revision adds an earlier artist or key', async () => {
+      const generation = 'waiting-new-revision';
+      const testEnv = await publicationFixture(generation);
+      await env.DB.prepare('UPDATE rebuild_jobs SET retry_at=?').bind(Date.now() + 86400000).run();
+      vi.stubGlobal('fetch', vi.fn(() => { throw new Error('No Spotify calls while waiting'); }));
+      await deliver({ generation, revision: 0 }, testEnv);
+      await deliver({ generation, revision: 0 }, testEnv);
+      await stageRecording(generation, 'a-new-earlier-key', trackId22(77), '0000000000000000000000');
+      await env.DB.prepare('UPDATE rebuild_jobs SET revision=revision+1').run();
+      await deliver({ generation, revision: 1 }, testEnv);
+      expect((await statusSnapshot(env)).candidateCount).toBe(3);
+      expect(await env.DB.prepare("SELECT recording_key FROM recordings WHERE generation='old-public' AND recording_key='a-new-earlier-key'").first())
+        .toEqual({ recording_key: 'a-new-earlier-key' });
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('does not cache an empty waiting pass while another invocation holds the lease', async () => {
+      const generation = 'waiting-empty-lease';
+      const testEnv = await publicationFixture(generation);
+      await env.DB.prepare('DELETE FROM recordings WHERE generation=?').bind(generation).run();
+      await env.DB.prepare('UPDATE rebuild_jobs SET retry_at=?,lease_until=?').bind(Date.now() + 86400000, Date.now() + 100000).run();
+      vi.stubGlobal('fetch', vi.fn(() => { throw new Error('No Spotify calls while waiting'); }));
+      await deliver({ generation, revision: 0 }, testEnv);
+      await stageRecording(generation, 'after-lease', trackId22(78));
+      await env.DB.prepare('UPDATE rebuild_jobs SET lease_until=NULL').run();
+      await deliver({ generation, revision: 0 }, testEnv);
+      expect((await statusSnapshot(env)).candidateCount).toBe(2);
+    });
+
+    it('does not save an exhausted waiting pass onto a migration-rerouted revision', async () => {
+      const generation = 'waiting-empty-revision-race';
+      const testEnv = await publicationFixture(generation);
+      await env.DB.prepare('DELETE FROM recordings WHERE generation=?').bind(generation).run();
+      await env.DB.prepare('UPDATE rebuild_jobs SET retry_at=?').bind(Date.now() + 86400000).run();
+      await deliver({ generation, revision: 0 }, raceBeforeBatch(testEnv, 1, () => rerouteForMigration(generation)));
+      const progress = (await env.DB.prepare('SELECT progress_json FROM rebuild_jobs').first<{ progress_json: string }>())!;
+      expect(JSON.parse(progress.progress_json).publicationScan).toBeUndefined();
+      expect(await jobRow(generation)).toMatchObject({ revision: 1, phase: 'never_identities', lease_until: null });
     });
 
     it.each(['preflight', 'never_identities', 'seeds', 'known_playlists', 'known_playlist_items'] as RefreshPhase[])
