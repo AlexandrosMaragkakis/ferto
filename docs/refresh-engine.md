@@ -123,6 +123,15 @@ npm run simulate -- --scenario soak --initial-live-artists 3
 
 ## Compact operational history
 
+Cooldown publication scans retain a durable cursor and empty-pass marker for
+the current job revision. Duplicate delayed messages read the singleton job
+instead of rescanning unchanged staging after a pass is exhausted. Source work
+advances the revision, which starts a fresh pass and includes earlier artist/key
+additions. The scan acquires the existing lease before reading candidates;
+publication and its checkpoint commit together with generation/revision guards.
+Migration `0023_never_isrc_lookup.sql` adds the missing Never ISRC index so the
+recording-key, exact-id and ISRC alternatives can all use indexed lookups.
+
 Migration `0020_operational_history.sql` adds:
 
 - `refresh_history`: the latest 30 runs with start/end, outcome, error,
