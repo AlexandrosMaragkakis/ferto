@@ -51,6 +51,46 @@ The stack is a Vite frontend and a Cloudflare Worker with D1 and Queues, using
 the Spotify Web API and official Embed. An owner's Spotify app needs to meet
 Spotify's current [Development Mode requirements](https://developer.spotify.com/documentation/web-api/concepts/quota-modes).
 
+## Architecture
+
+```mermaid
+flowchart TD
+  accTitle: FERTO architecture
+  accDescr: One Cloudflare Worker serves the browser and runs queued catalogue refreshes and scheduled maintenance, with shared D1 storage and separate Spotify playback.
+  ui["Browser UI<br/>public discovery and owner controls"]
+  embed["Spotify Embed"]
+  spotify["Spotify APIs<br/>Web API and account authorization"]
+  db[("Cloudflare D1<br/>catalogue, jobs, caches and history")]
+  queue["Cloudflare Queues"]
+  cron["Cron triggers<br/>weekly refresh and watchdog"]
+
+  subgraph worker["One Cloudflare Worker"]
+    http["HTTP routes<br/>src/worker.ts"]
+    refresh["Refresh engine<br/>src/rebuild.ts"]
+  end
+
+  ui -->|API requests| http
+  ui -->|playback| embed
+  http -->|recommendations and owner state| db
+  http -->|sign-in and owner actions| spotify
+  http -->|starts refreshes and applies exclusions| refresh
+  cron -->|scheduled handler| refresh
+  refresh -->|catalogue reads| spotify
+  refresh -->|catalogue, progress and caches| db
+  refresh -.->|enqueues work| queue
+  queue -.->|same Worker's queue handler| refresh
+```
+
+The HTTP, queue and scheduled handlers run in the same Worker. Public discovery
+uses the stored D1 catalogue; background refreshes fetch Spotify data and save
+their progress in D1. The catalogue and track caches are D1 tables, and playback
+stays in Spotify's embedded player.
+
+For the supporting modules, see the
+[generated interactive overview on GitDiagram](https://gitdiagram.com/alexandrosmaragkakis/ferto?utm_source=readme&utm_medium=link).
+The [flow diagrams](docs/flows/README.md) describe the implemented sign-in,
+discovery, refresh and owner-action paths in more detail.
+
 ## Contribute and maintain
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for small changes and validation, and
