@@ -1,5 +1,7 @@
 # FERTO
 
+**[Live site](https://ferto.maragkakis-alexandros.workers.dev/)**
+
 A small, self-hosted music-discovery app for finding unfamiliar songs from
 artists in one Spotify owner's library.
 
