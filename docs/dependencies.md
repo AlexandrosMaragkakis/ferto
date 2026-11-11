@@ -5,19 +5,19 @@ from this checkout before installing dependencies or preparing a release.
 The checked-in `.nvmrc` selects Node 24.22.2, which includes npm 11.19.1.
 `package.json` records the supported Node/npm ranges and package manager.
 
-The toolchain reviewed on 5 November 2026 is:
+The toolchain reviewed on 11 November 2026 is:
 
 | Component | Locked version |
 | --- | --- |
 | Node / npm | 24.22.2 / 11.19.1 |
-| Vite | 8.3.5 |
+| Vite | 8.3.6 |
 | Vitest | 5.1.0 |
-| Cloudflare Vitest plugin | 1.5.1 |
-| Wrangler | 4.157.0 |
-| Workers types | 5.20261104.1 |
+| Cloudflare Vitest plugin | 1.6.0 |
+| Wrangler | 4.158.0 |
+| Workers types | 5.20261107.1 |
 | Node types | 24.19.2 |
 | TypeScript | 5.9.3 |
-| Playwright | 1.64.1 |
+| Playwright | 1.65.0 |
 
 Cloudflare renamed the old `@cloudflare/vitest-pool-workers` package to
 `@cloudflare/vitest-plugin` and deprecated the old package. The Vite import and
@@ -70,6 +70,10 @@ monthly. Npm minor/patch changes are grouped so the compatible toolchain can
 be reviewed together; major changes remain separate. Open proposals are capped
 at five for npm and three for Actions. See GitHub's
 [options reference](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference).
+
+Major `@types/node` proposals are ignored so declarations stay aligned with the
+supported Node 24 runtime. Review that rule alongside `.nvmrc` and `engines`
+when deliberately upgrading Node; minor/patch declaration updates continue.
 
 These are proposals for review, with no automatic merge or deployment. The
 ordinary check workflow runs without Cloudflare credentials. Confirm the
