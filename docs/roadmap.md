@@ -16,7 +16,7 @@ and persistent failures stop verification promptly.
 - [x] Give browser dependency installation an explicit step timeout and bounded
   retries with useful failure logs. Use the recent Ubuntu package mirror
   timeouts as the failure case to address.
-- [ ] Confirm transient failures can recover and persistent failures stop before
+- [x] Confirm transient failures can recover and persistent failures stop before
   deployment. Keep all verification, artifact, backup and Queue safeguards.
 - [x] Update the [CI/CD guide](ci-cd.md) with the resulting behavior.
 
@@ -24,25 +24,34 @@ and persistent failures stop verification promptly.
 browser setup has a documented upper time bound. The required production
 Queue drain remains unchanged.
 
+**Validation:** [PR #9](https://github.com/AlexandrosMaragkakis/ferto/pull/9)
+merged after both hosted Verify jobs passed. Full local verification and five
+installer regression checks passed, including termination of a hung child.
+
 ## 2. Plan database retention
 
 **Outcome:** understand storage growth and preview cleanup before introducing
 any deletion policy.
 
-- [ ] Use a verified backup to report growth by table and catalogue generation,
+- [x] Use a verified backup to report growth by table and catalogue generation,
   distinguishing live data, staging, caches and retained history. Label local
   storage estimates separately from Cloudflare's live measurements.
-- [ ] Define which expired caches and obsolete generations could be removed.
+- [x] Define which expired caches and obsolete generations could be removed.
   Preserve permanent Never identities, live/active generations, reference
   integrity and the aliases/history needed to handle stale cards.
-- [ ] Add a dry-run cleanup preview with candidate counts and explanations of
+- [x] Add a dry-run cleanup preview with candidate counts and explanations of
   what would be retained. This checkpoint delivers analysis and a preview;
   applying deletions or enabling automatic pruning is separate work.
-- [ ] Check the preview against synthetic fixtures and a verified backup, and
+- [x] Check the preview against synthetic fixtures and a verified backup, and
   update [backups and recovery](backups-and-recovery.md).
 
 **Done when:** storage growth is explained and the preview identifies cleanup
 candidates without modifying its input or breaking the preservation rules.
+
+**Validation:** full local verification and five retention regression checks
+passed. Two verified backups were compared, covering schemas 0022 and 0023;
+table/generation growth and expiry candidates were reported privately. See
+[retention policy and usage](retention.md).
 
 ## 3. Publish the first GitHub release
 

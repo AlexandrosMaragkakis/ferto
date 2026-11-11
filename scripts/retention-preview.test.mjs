@@ -88,6 +88,7 @@ test("verified-backup preview is private, offline, immutable and reports growth"
     const output = join(root, "reports");
     const result = await previewRetention({ backup: current.directory, compare: old.directory, asOf: 100000, output, root: join(root, "unused-project") });
     assert.equal(result.report.growth.tables.find(row => row.name === "recordings").rowDelta, 1);
+    assert.equal(result.report.growth.generations.find(row => row.generation === "active").rowsByTable.recordings.delta, 1);
     assert.equal(result.report.current.snapshot.cloudflareDatabaseBytes, 123456);
     assert.equal(result.report.mode, "preview");
     assert.equal((await stat(join(result.directory, "report.json"))).mode & 0o777, 0o600);
@@ -101,6 +102,8 @@ test("verified-backup preview is private, offline, immutable and reports growth"
 test("mismatched databases and corrupt backups are rejected", async () => {
   await fixture(async ({ root, config, configFile, makeBackup }) => {
     const old = await makeBackup();
+    const sameDatabase = await makeBackup();
+    await assert.rejects(previewRetention({ backup: old.directory, compare: sameDatabase.directory, output: join(root, "reports") }), /chronological order/);
     config.d1_databases[0].database_id = "22222222-2222-4222-8222-222222222222";
     await writeFile(configFile, JSON.stringify(config));
     const current = await makeBackup();

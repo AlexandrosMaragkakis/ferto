@@ -35,7 +35,8 @@ reviewing the rules before enabling analysis of that version.
   Cloudflare's recorded database size is labelled separately with the backup
   snapshot time. It is not a new live measurement.
 - Comparison requires chronological backups from the same database. Row and
-  local-byte deltas describe the snapshots, not a forecast of future growth.
+  local-byte deltas, including per-generation row deltas, describe the snapshots,
+  not a forecast of future growth. Schema/index differences can affect byte deltas.
 - Reports can reveal library size and generation identifiers. Keep real reports
   private; use synthetic fixtures for public examples and pull requests.
 

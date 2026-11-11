@@ -88,11 +88,19 @@ export function analyzeRetention(db, { asOf = Date.now() } = {}) {
 
 export function compareRetention(previous, current) {
   const old = new Map(previous.storage.tables.map(table => [table.name, table]));
+  const before = new Map(previous.generations.map(row => [row.generation, row]));
+  const after = new Map(current.generations.map(row => [row.generation, row]));
+  const generations = [...new Set([...before.keys(), ...after.keys()])].sort().map(generation => {
+    const oldRows = before.get(generation)?.rowsByTable ?? {};
+    const newRows = after.get(generation)?.rowsByTable ?? {};
+    return { generation, rowsByTable: Object.fromEntries([...new Set([...Object.keys(oldRows), ...Object.keys(newRows)])].sort().map(table =>
+      [table, { before: oldRows[table] ?? 0, after: newRows[table] ?? 0, delta: (newRows[table] ?? 0) - (oldRows[table] ?? 0) }])) };
+  });
   return { from: previous.asOf, to: current.asOf, tables: current.storage.tables.map(table => ({
     name: table.name, rowsBefore: old.get(table.name)?.rows ?? 0, rowsAfter: table.rows,
     rowDelta: table.rows - (old.get(table.name)?.rows ?? 0),
     localByteDelta: table.localBytes !== null && old.get(table.name)?.localBytes !== null && old.has(table.name) ? table.localBytes - old.get(table.name).localBytes : null,
-  })), generationsBefore: previous.generations.length, generationsAfter: current.generations.length };
+  })), generations, generationsBefore: previous.generations.length, generationsAfter: current.generations.length };
 }
 
 export async function previewRetention({ backup, compare, asOf = Date.now(), output = join(projectRoot, ".local/retention"), root = projectRoot } = {}) {
