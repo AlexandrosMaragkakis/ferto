@@ -34,7 +34,7 @@
     "deploy:local": "node scripts/deploy-local.mjs",
     "release:smoke": "node scripts/release-smoke.mjs",
     "recovery:prepare": "node scripts/prepare-recovery.mjs",
-    "test:operations": "node --test scripts/backup.test.mjs scripts/release-smoke.test.mjs scripts/deploy-local.test.mjs scripts/recovery.test.mjs scripts/backup-encryption.test.mjs scripts/deploy-ci.test.mjs scripts/operations-usage.test.mjs",
+    "test:operations": "node --test scripts/backup.test.mjs scripts/release-smoke.test.mjs scripts/deploy-local.test.mjs scripts/recovery.test.mjs scripts/backup-encryption.test.mjs scripts/deploy-ci.test.mjs scripts/operations-usage.test.mjs scripts/install-browser.test.mjs",
     "test:release": "node --test scripts/release-artifact.test.mjs",
     "verify": "node scripts/verify.mjs",
     "release:prepare": "npm run verify && node scripts/release-artifact.mjs",
