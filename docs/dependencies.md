@@ -16,7 +16,7 @@ The toolchain reviewed on 11 November 2026 is:
 | Wrangler | 4.158.0 |
 | Workers types | 5.20261107.1 |
 | Node types | 24.19.2 |
-| TypeScript | 5.9.3 |
+| TypeScript | 7.0.2 |
 | Playwright | 1.65.0 |
 
 Cloudflare renamed the old `@cloudflare/vitest-pool-workers` package to
