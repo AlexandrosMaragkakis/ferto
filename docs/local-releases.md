@@ -41,6 +41,12 @@ new or dirty revision. It:
    checks every static asset hash plus API authorization/security headers, then
    resumes and confirms delivery. Receipts/logs are private in `.local/releases/`.
 
+Deployment-list reads can briefly show the previous Worker after a successful
+deploy. Confirmation retries only that known previous version, using at most
+six reads separated by five-second delays. An unexpected version or split
+traffic stops immediately; the helper never repeats the deployment write.
+The same confirmation runs again after smoke checks, before resuming delivery.
+
 Pending migrations are refused by default. Read their SQL and verify that old
 and new HTTP/cron code can tolerate the transition before deliberately using:
 

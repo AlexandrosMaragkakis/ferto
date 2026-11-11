@@ -30,6 +30,10 @@ merged after both hosted Verify jobs passed. Follow-up
 privilege boundary after a hosted timeout exposed a surviving APT process.
 All six installer checks passed on the hosted runner, including termination
 of a root-owned child; full verification passed.
+Production delivery also exposed a briefly stale deployment-list response.
+Version confirmation now retries only the known previous Worker within bounded
+attempts; regression checks preserve immediate refusal of unexpected versions
+and split traffic, and preserve the single deployment write and Queue fence.
 
 ## 2. Plan database retention
 

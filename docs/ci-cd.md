@@ -141,6 +141,10 @@ provisioned; monitor GitHub storage allowances if usage grows.
 After a saved backup is confirmed, deployment uses the same Queue pause,
 16-minute drain, artifact/schema/Worker revalidation, exact deployment, live
 asset/header/authorization checks and confirmed resume as the local helper.
+After deploying and before resuming, a deployment-list response that still
+shows the known previous Worker is retried with at most six reads and five
+five-second delays. Another Worker or split traffic stops confirmation
+immediately. Deployment writes are never retried by this check.
 The website normally keeps serving during a routine release. A Queue fence is
 not a database-write lock; avoid simultaneous owner mutations during upgrades.
 
