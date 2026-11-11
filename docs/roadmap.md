@@ -1,9 +1,9 @@
 # Development roadmap
 
-Updated **11 November 2026**. Implementation is underway; checked items record
-completed work and each checkpoint lists its completion gate.
+Resolved **11 November 2026**. All four checkpoints are complete; checked items
+record the delivered work and each checkpoint lists its completion gate.
 
-Follow these in order after the completed publication and CI/CD setup.
+These followed the completed publication and CI/CD setup.
 Keep FERTO's single-owner model, public discovery, artwork-driven interface
 and official Spotify player. Work within the existing no-payment setup.
 
@@ -60,37 +60,50 @@ table/generation growth and expiry candidates were reported privately. See
 
 **Outcome:** a versioned release that readers can identify, verify and self-host.
 
-- [ ] Confirm `0.1.0` is the intended package version and `v0.1.0` is available.
+- [x] Confirm `0.1.0` is the intended package version and `v0.1.0` is available.
   Select the exact verified `main` revision after checkpoints 1 and 2.
-- [ ] Write concise release notes covering the app, local demo, single-owner
+- [x] Write concise release notes covering the app, local demo, single-owner
   setup, deployment/recovery tooling and known limitations.
-- [ ] Create the version tag and GitHub release. If attaching a release package,
+- [x] Create the version tag and GitHub release. If attaching a release package,
   use the verified generic artifact and its checksum manifest; keep instance
   configuration, credentials, backups and operational logs private.
-- [ ] Check the tag/revision, artifact hashes, secret scans and release links.
+- [x] Check the tag/revision, artifact hashes, secret scans and release links.
 
 **Done when:** the published release identifies the verified commit, its notes
 match the shipped behavior, and any downloadable package passes validation.
+
+**Validation:** [v0.1.0](https://github.com/AlexandrosMaragkakis/ferto/releases/tag/v0.1.0)
+identifies verified revision `f35ba7b`. The public generic archive was scanned,
+downloaded again and checked against its SHA-256 checksum and all 48 manifest
+entries. Private instance files and operational evidence remain outside it.
 
 ## 4. Add recently shown tracks
 
 **Outcome:** recover an accidental skip with a small Back control.
 
-- [ ] Keep a bounded, per-tab history of shown cards in the browser.
+- [x] Keep a bounded, per-tab history of shown cards in the browser.
   Back visits an earlier card; Next moves forward through saved cards before
   requesting a fresh recommendation at the end of the history.
-- [ ] Reuse card metadata and keep the title, artwork, surrounding theme and
+- [x] Reuse card metadata and keep the title, artwork, surrounding theme and
   official Spotify embed in sync while navigating.
-- [ ] Remove affected recordings from this history after a confirmed Add or
+- [x] Remove affected recordings from this history after a confirmed Add or
   Never action. Preserve the current card and retry behavior after an
   unconfirmed action; keep server authorization and stale-card validation.
-- [ ] Make the control accessible on keyboard, screen readers and mobile.
+- [x] Make the control accessible on keyboard, screen readers and mobile.
   Check navigation boundaries, the history limit, action outcomes, loading
   failures and delayed artwork/player events.
-- [ ] Update the relevant [operations](operations.md) and development guidance.
+- [x] Update the relevant [operations](operations.md) and development guidance.
 
 **Done when:** Back/Next navigation works within the documented history bound,
 owner decisions remain authoritative, and desktop/mobile browser checks pass.
+
+**Validation:** full verification passed, including eight history-model tests,
+server checks for stable opaque identities and authoritative action responses,
+and 56 desktop/mobile browser checks. The UI checks cover cached navigation,
+the 20-card limit, reload/storage denial, confirmed alias removal, unconfirmed
+and expired actions, pending/failed/empty draws and late artwork events. Fictional
+before/after desktop/mobile captures and the 320px width review are linked from
+[development](development.md#browser-checks-and-releases).
 
 ## Working practice
 

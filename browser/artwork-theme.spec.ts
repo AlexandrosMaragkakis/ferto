@@ -87,6 +87,23 @@ test("cover colours change the surrounding UI while the native embed and layout 
   await expect(page.locator("#embed-frame")).toHaveAttribute("src",
     `https://open.spotify.com/embed/track/${blue.spotify_id}?utm_source=generator`);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+
+  // Back and cached Next use the same paint path, including palette/iframe
+  // replacement. Detached load/error events must not recolour the current card.
+  await page.evaluate(() => { (window as unknown as { oldArt: Element }).oldArt = document.querySelector("#art")!; });
+  await page.locator("#previous").click();
+  await expectArtworkPalette(page, red.title);
+  expect(await palette(page)).toEqual(redPalette);
+  await page.evaluate(() => {
+    const old = (window as unknown as { oldArt: Element }).oldArt;
+    old.dispatchEvent(new Event("load")); old.dispatchEvent(new Event("error"));
+  });
+  expect(await palette(page)).toEqual(redPalette);
+  await expect(page.locator("#embed-frame")).toHaveAttribute("src",
+    `https://open.spotify.com/embed/track/${red.spotify_id}?utm_source=generator`);
+  await page.locator("#another").click();
+  await expectArtworkPalette(page, blue.title);
+  expect(await palette(page)).toEqual(bluePalette);
 });
 
 test("an artwork palette survives reload and keeps its hue when switching light and dark", async ({ page }) => {

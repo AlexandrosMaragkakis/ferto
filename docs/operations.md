@@ -197,6 +197,18 @@ for resource settings, see [configuration](configuration.md).
   or identity internals. The draw is uniform over artists first, then uniform
   within the chosen artist, so prolific artists don't flood the site. The
   `exclude` parameter skips only the current track for that single request.
+- **Recently shown tracks**: each tab keeps at most 20 cards in session storage,
+  with an in-memory fallback when storage is unavailable. Back revisits the
+  previous card; Next visits saved forward cards before drawing again. Cached
+  navigation makes no recommendation request. Reload retains the history and
+  attempts a fresh draw; closing the tab normally clears its session storage.
+  Card metadata is a recent snapshot, so artwork or availability can change
+  upstream. The response includes an opaque recording identity for grouping
+  aliases, without exposing raw recording keys or granting write authority.
+  Confirmed Add/Never actions remove the affected recording and its known
+  aliases from that tab's history. An unconfirmed action keeps the card and
+  history for retry. Decisions made in other tabs are revalidated by the server
+  when acting on a cached card; history is not synchronized between tabs.
 - **Owner actions**: **Like** saves to Spotify first through the current generic
   `PUT /me/library` endpoint; a stale id-only card first receives a read-only
   metadata lookup so its ISRC can be matched to a newer representative. Only

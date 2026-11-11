@@ -29,6 +29,11 @@ runs in the browser and caches up to 64 artwork colours locally, without extra
 Spotify API requests or database writes. Missing artwork or blocked pixel
 access falls back to a neutral palette.
 
+Back revisits up to 20 recently shown cards in the current tab. Next follows
+saved forward cards before requesting another recommendation. Session storage
+retains this bounded metadata across reloads; disabled storage uses memory.
+No Spotify API requests or database writes are needed for cached navigation.
+
 The demo is deliberately isolated at `.wrangler/demo-state`. It never opens the
 normal `.wrangler/state` database and every D1 command includes both `--local`
 and `--persist-to .wrangler/demo-state`, so it cannot touch remote D1. Re-running
@@ -80,6 +85,25 @@ against an isolated migrated local Worker, and dry-runs the deployment.
 Browser checks block external Spotify/artwork traffic and use synthetic owner
 responses for authenticated UI scenarios. They also exercise real public API
 and unauthorized owner requests. No live credentials or databases are used.
+
+The recent-history checks cover keyboard and mobile controls, bounded storage,
+reload and storage denial, canonical alias removal after confirmed owner
+actions, failed/expired actions, and pending/failed draws. Artwork checks also
+revisit cached cards and dispatch detached image events to check that the
+current title, palette and official player remain synchronized. The server
+resolves recording identity from the Spotify track id; browser metadata never
+authorizes or determines an owner mutation.
+
+Recent-history UI review uses fictional tracks and the original demo cover:
+
+| View | Before | With Back and the history position |
+| --- | --- | --- |
+| Desktop | [Before](images/recent-tracks-before-desktop.png) | [After](images/recent-tracks-after-desktop.png) |
+| Mobile | [Before](images/recent-tracks-before-mobile.png) | [After](images/recent-tracks-after-mobile.png) |
+
+External player requests were blocked for these captures; the Spotify frame
+therefore has no remote content. The official embed and its fallback behavior
+are covered by the browser checks.
 
 Verification also runs `npm run test:demo` against the actual demo command in
 a temporary folder, with no env file or provider credentials. It migrates and

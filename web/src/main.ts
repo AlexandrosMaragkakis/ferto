@@ -4,9 +4,8 @@ import { progressText, retryText, type ProgressSnapshot } from "./refresh-progre
 import { ArtworkTheme } from "./artwork-theme";
 import type { OperationalHistory } from "../../src/operations";
 import { fetchWithDeadline } from "../../src/request";
+import { RecentHistory, type HistoryStorage, type RecentTrack as Recommendation } from "./recent-history";
 
-type Credit = { id: string; name: string };
-type Recommendation = { spotify_id: string; title: string; artists: Credit[]; album_name: string; image_url: string | null; spotify_url: string };
 type RecommendationResponse = { recommendation: Recommendation | null; candidateCount: number };
 type RefreshStatus = ProgressSnapshot & {
   state?: "idle" | "active" | "waiting" | "failed";
@@ -45,6 +44,9 @@ const SESSION_EXPIRED_MESSAGE = "Your owner session has expired. Sign in again t
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 const ownerMode = new URL(location.href).searchParams.get("owner") === "1";
 const artworkTheme = new ArtworkTheme(document.documentElement);
+let historyStorage: HistoryStorage | null = null;
+try { historyStorage = window.sessionStorage; } catch { /* Per-tab memory still works. */ }
+const recent = new RecentHistory(historyStorage);
 let artworkRequest = 0;
 
 let current: Recommendation | null = null;
@@ -88,14 +90,16 @@ function refreshMessage(text = "") {
 
 /** Like/Never stay owner-only; controls disable while a request is in flight. */
 function updateControls() {
-  const actionEnabled = owner && current !== null && !actionPending;
+  const actionEnabled = owner && current !== null && !actionPending && !loadPending;
   $("#never").toggleAttribute("disabled", !actionEnabled);
   $("#like").toggleAttribute("disabled", !actionEnabled);
   // A failed request leaves an explicit retry path even though the catalogue
   // size is unknown. Empty successful responses continue polling quietly.
-  $("#another").toggleAttribute("disabled", loadPending || actionPending || (!recommendationFailed && readyCandidateCount === 0));
-  $("#another .action-label").textContent = recommendationFailed ? "Retry" : "Next";
-  $("#another").setAttribute("aria-label", recommendationFailed ? "Retry loading a recommendation" : "Show another recommendation");
+  $("#another").toggleAttribute("disabled", loadPending || actionPending || (!recent.canForward && !recommendationFailed && readyCandidateCount === 0));
+  $("#another .action-label").textContent = recommendationFailed && !recent.canForward ? "Retry" : "Next";
+  $("#another").setAttribute("aria-label", recent.canForward ? "Show next recently shown track" : recommendationFailed ? "Retry loading a recommendation" : "Show another recommendation");
+  $("#previous").toggleAttribute("disabled", loadPending || actionPending || !recent.canBack);
+  $("#recent-position").textContent = recent.position ? `${recent.position} of ${recent.size} recently shown` : recent.size ? `${recent.size} recently shown` : "Recently shown tracks";
   $("#action-help").textContent = owner
     ? "Add saves to your Liked Songs. Never again excludes this song from FERTO permanently."
     : "Next is for everyone. Only the owner can save or hide songs.";
@@ -240,7 +244,7 @@ function showEmbed(item: Recommendation) {
 }
 
 async function load(avoidRepeat = false) {
-  if (loadPending) return;
+  if (loadPending || actionPending) return;
   window.clearTimeout(emptyPollTimer);
   loadPending = true;
   updateControls();
@@ -259,7 +263,7 @@ async function load(avoidRepeat = false) {
       scheduleEmptyPoll();
       return;
     }
-    paint(body.recommendation);
+    paint(body.recommendation ? recent.append(body.recommendation) : recent.deselect());
     message(body.recommendation ? "" : EMPTY_MESSAGE);
     scheduleEmptyPoll();
   } catch {
@@ -383,14 +387,19 @@ async function ownerState() {
 
 /** One-click owner action: no confirmation, next recommendation on success, current card kept on failure. */
 async function ownerAction(path: string, working: string, failure: string): Promise<void> {
-  if (!current || actionPending) return;
+  if (!current || actionPending || loadPending) return;
+  const acted = current;
   actionPending = true;
   updateControls();
   message(working);
   let succeeded = false;
+  let confirmedId: unknown;
   try {
-    const response = await api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trackId: current.spotify_id }) });
+    const response = await api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trackId: acted.spotify_id }) });
     succeeded = response.ok;
+    if (succeeded) {
+      try { confirmedId = (await response.json() as { recordingId?: unknown })?.recordingId; } catch { /* Older successful responses still remove the acted-on id. */ }
+    }
     message(succeeded ? "" : response.status === 401 ? SESSION_EXPIRED_MESSAGE : failure);
   } catch {
     message(ACTION_UNREACHABLE_MESSAGE);
@@ -398,12 +407,25 @@ async function ownerAction(path: string, working: string, failure: string): Prom
     actionPending = false;
     updateControls();
   }
-  // A failed Like or Never deliberately leaves the current card on screen;
-  // only a successful action asks for the next recommendation.
-  if (succeeded) await load();
+  // Confirmed decisions remove all known aliases. Failed writes leave both
+  // the current card and the navigation history available for retry.
+  if (succeeded) {
+    const next = recent.removeRecording(acted, confirmedId);
+    paint(next);
+    if (!next) await load();
+  }
 }
 
-$("#another").addEventListener("click", () => void load(true));
+function navigateRecent(direction: "back" | "forward"): boolean {
+  if (loadPending || actionPending) return false;
+  const item = direction === "back" ? recent.back() : recent.forward();
+  if (!item) return false;
+  window.clearTimeout(emptyPollTimer);
+  recommendationFailed = false;
+  paint(item); message(); return true;
+}
+$("#previous").addEventListener("click", () => { navigateRecent("back"); });
+$("#another").addEventListener("click", () => { if (!navigateRecent("forward")) void load(true); });
 $("#retry-embed").addEventListener("click", () => { if (current) showEmbed(current); });
 $("#like").addEventListener("click", () => void ownerAction("/api/owner/like", "Saving to your Spotify…", LIKE_FAILED_MESSAGE));
 $("#never").addEventListener("click", () => void ownerAction("/api/owner/never-again", "Excluding this song…", NEVER_FAILED_MESSAGE));
@@ -480,6 +502,7 @@ applyTheme(document.documentElement.classList.contains("dark"));
 void ownerState().catch(() => {
   if (ownerMode) refreshMessage("Owner access could not be checked. Reload to try again, or keep exploring.");
 });
+if (recent.current) paint(recent.current);
 void load();
 
 $("#operational-history").addEventListener("toggle", async () => {

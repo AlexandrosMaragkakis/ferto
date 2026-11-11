@@ -196,10 +196,10 @@ describe("Worker routes with the v4 recording schema", () => {
       await setLive("live-1");
       const body = await (await publicGet("/api/recommendation")).json() as Record<string, unknown>;
       expect(Object.keys(body).sort()).toEqual(["candidateCount", "recommendation"]);
-      // The exact public shape: ordered artists, no ISRC, recording key, or
-      // any other internal identity or refresh field.
+      // Public identity is opaque; no raw ISRC, recording key or refresh fields.
       expect(body.recommendation).toEqual({
         spotify_id: trackId,
+        recordingId: expect.stringMatching(/^[a-f0-9]{64}$/),
         title: "Track",
         artists: [
           { id: "ccccccccccccccccccccc", name: "Lead" },
@@ -219,6 +219,22 @@ describe("Worker routes with the v4 recording schema", () => {
       const body = await (await publicGet("/api/recommendation")).json() as { recommendation: { title: string } | null; candidateCount: number };
       expect(body.recommendation?.title).toBe("Live track");
       expect(body.candidateCount).toBe(1);
+    });
+
+    it("keeps public recording identity stable across representative changes without exposing raw keys", async () => {
+      await seedRecording("first", { recording_key: "isrc:USABC2100001", isrc: "USABC2100001" });
+      await setLive("first");
+      const first = await (await publicGet("/api/recommendation")).json<{ recommendation: { recordingId: string } }>();
+      await seedRecording("replacement", { recording_key: "isrc:USABC2100001", isrc: "USABC2100001", spotify_id: otherTrackId });
+      await setLive("replacement");
+      const next = await (await publicGet("/api/recommendation")).json<{ recommendation: { recordingId: string; spotify_id: string } }>();
+      expect(next.recommendation.spotify_id).toBe(otherTrackId);
+      expect(next.recommendation.recordingId).toBe(first.recommendation.recordingId);
+      expect(JSON.stringify(next)).not.toContain("USABC2100001");
+      await seedRecording("different", { recording_key: "isrc:USABC2100002", isrc: "USABC2100002" });
+      await setLive("different");
+      const different = await (await publicGet("/api/recommendation")).json<{ recommendation: { recordingId: string } }>();
+      expect(different.recommendation.recordingId).not.toBe(first.recommendation.recordingId);
     });
 
     it("reports an empty shelf when nothing is live yet, even with staged candidates", async () => {
@@ -611,13 +627,16 @@ describe("Worker routes with the v4 recording schema", () => {
       await seedRecording("legacy", { recording_key: `spotify:${trackId}`, spotify_id: trackId, title: "Old exact-id card" });
       await seedRecording("live-2", { recording_key: "isrc:USABC2100001", isrc: "USABC2100001", spotify_id: otherTrackId, title: "Current representative" });
       await setLive("live-2");
+      const canonical = await (await publicGet("/api/recommendation")).json<{ recommendation: { recordingId: string } }>();
       const fetchSpy = vi.fn()
         .mockResolvedValueOnce(tokenOk())
         .mockResolvedValueOnce(new Response(JSON.stringify({ id: trackId, external_ids: { isrc: "US-ABC-21-00001" } }), { headers: { "Content-Type": "application/json" } }))
         .mockResolvedValueOnce(new Response("", { status: 200 }));
       vi.stubGlobal("fetch", fetchSpy);
 
-      expect((await worker.fetch(ownerRequest("/api/owner/like", await ownerCookie(), { trackId }), env)).status).toBe(200);
+      const response = await worker.fetch(ownerRequest("/api/owner/like", await ownerCookie(), { trackId, recordingId: "forged" }), env);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, recordingId: canonical.recommendation.recordingId });
       expect(fetchSpy.mock.calls.map(([url]) => String(url))).toEqual([
         "https://accounts.spotify.com/api/token",
         `https://api.spotify.com/v1/tracks/${trackId}`,
@@ -685,10 +704,12 @@ describe("Worker routes with the v4 recording schema", () => {
     it("uses an ISRC-confirmed live identity directly without another Spotify call", async () => {
       await seedRecording("live-1", { recording_key: "isrc:USABC2100001", isrc: "USABC2100001" });
       await setLive("live-1");
+      const canonical = await (await publicGet("/api/recommendation")).json<{ recommendation: { recordingId: string } }>();
       const fetchSpy = vi.fn();
       vi.stubGlobal("fetch", fetchSpy);
-      const response = await worker.fetch(ownerRequest("/api/owner/never-again", await ownerCookie(), { trackId }), env);
+      const response = await worker.fetch(ownerRequest("/api/owner/never-again", await ownerCookie(), { trackId, recordingId: "forged" }), env);
       expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, recordingId: canonical.recommendation.recordingId });
       expect(fetchSpy).not.toHaveBeenCalled();
       const row = await env.DB.prepare("SELECT recording_key, isrc, spotify_id FROM never_recordings").first<{ recording_key: string; isrc: string | null; spotify_id: string }>();
       expect(row).toMatchObject({ recording_key: "isrc:USABC2100001", isrc: "USABC2100001", spotify_id: trackId });

@@ -102,8 +102,9 @@ describe("FERTO interface", () => {
       expect(mainSource).toContain('ownerAction("/api/owner/never-again"');
     });
 
-    it("requests the next recommendation only after a successful action", () => {
-      expect(mainSource).toContain("if (succeeded) await load();");
+    it("keeps actionable failure messages when owner writes fail", () => {
+      // Failed-write preservation and confirmed-write navigation are exercised
+      // against the running UI in browser/recent-history.spec.ts.
       const likeFailure = /LIKE_FAILED_MESSAGE = "([^"]*)"/.exec(mainSource)?.[1] ?? "";
       const neverFailure = /NEVER_FAILED_MESSAGE = "([^"]*)"/.exec(mainSource)?.[1] ?? "";
       // Both failures keep the current card on screen and say so.
@@ -112,7 +113,7 @@ describe("FERTO interface", () => {
     });
 
     it("disables Like and Never for visitors and while a request is in flight", () => {
-      expect(mainSource).toContain("const actionEnabled = owner && current !== null && !actionPending;");
+      expect(mainSource).toContain("const actionEnabled = owner && current !== null && !actionPending && !loadPending;");
       expect(mainSource).toContain('$("#never").toggleAttribute("disabled", !actionEnabled);');
       expect(mainSource).toContain('$("#like").toggleAttribute("disabled", !actionEnabled);');
     });
@@ -194,7 +195,7 @@ describe("FERTO interface", () => {
     it("keeps transient recommendation and refresh failures recoverable", () => {
       expect(mainSource).toContain("recommendationFailed = true;");
       expect(mainSource).toContain("scheduleEmptyPoll(10_000);");
-      expect(mainSource).toContain("(!recommendationFailed && readyCandidateCount === 0)");
+      // Recommendation retry and cached forward navigation run in the browser suite.
       expect(mainSource).toContain("refreshPollFailures += 1;");
       expect(mainSource).toContain("schedulePoll(Math.min(60_000");
     });
