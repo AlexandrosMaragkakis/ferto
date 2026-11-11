@@ -45,6 +45,17 @@ async function confirmActiveVersion(read, expected, previous, wait) {
   }
 }
 
+async function confirmQueueSetting(read, paused, wait) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const observed = (await read()).settings?.delivery_paused;
+    if (typeof observed !== "boolean") throw new Error("Queue delivery setting was not returned");
+    if (observed === paused) return;
+    if (attempt === 5) throw new Error(paused ? "Queue delivery pause was not confirmed" : "Queue delivery did not resume");
+    console.log(`Queue settings still show delivery ${observed ? "paused" : "enabled"}; checking again in five seconds.`);
+    await wait(5000);
+  }
+}
+
 export function assertPreparedBackup(backup, target, revision, version, now = Date.now()) {
   const age = now - Date.parse(backup.completedAt);
   const database = target.config.d1_databases.find(binding => binding.binding === "DB");
@@ -94,7 +105,7 @@ export async function deployLocal({ configFile, migrate = false, plan = false, b
     try {
       pauseAttempted = true;
       await hooks.run(["queues", "pause-delivery", "ferto-refresh"], opts("pause"));
-      if (!(await hooks.queue(packaged, directory)).settings.delivery_paused) throw new Error("Queue delivery pause was not confirmed");
+      await confirmQueueSetting(() => hooks.queue(packaged, directory), true, hooks.wait);
       await hooks.drain(16 * 60_000);
       // Packaging or an external deployment may have changed during the drain.
       await hooks.verify(root);
@@ -114,7 +125,7 @@ export async function deployLocal({ configFile, migrate = false, plan = false, b
       await privateFile(join(directory, "smoke.json"), JSON.stringify(smoke, null, 2) + "\n");
       await confirmActiveVersion(attempt => hooks.json(["deployments", "list"], opts(attempt ? `before-resume-${attempt + 1}` : "before-resume")), version, receipt.previousVersion, hooks.wait);
       await hooks.run(["queues", "resume-delivery", "ferto-refresh"], opts("resume"));
-      if ((await hooks.queue(packaged, directory)).settings.delivery_paused) throw new Error("Queue delivery did not resume");
+      await confirmQueueSetting(() => hooks.queue(packaged, directory), false, hooks.wait);
       const result = { ...receipt, status: "complete", version, completedAt: new Date().toISOString() };
       await privateFile(join(directory, "complete.json"), JSON.stringify(result, null, 2) + "\n");
       return { ...result, directory };

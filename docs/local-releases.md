@@ -46,6 +46,9 @@ deploy. Confirmation retries only that known previous version, using at most
 six reads separated by five-second delays. An unexpected version or split
 traffic stops immediately; the helper never repeats the deployment write.
 The same confirmation runs again after smoke checks, before resuming delivery.
+After either Queue mutation, settings are likewise confirmed with at most six
+reads and five-second delays. Only reads retry; malformed settings fail
+immediately, and unconfirmed changes retain the failure pause.
 
 Pending migrations are refused by default. Read their SQL and verify that old
 and new HTTP/cron code can tolerate the transition before deliberately using:

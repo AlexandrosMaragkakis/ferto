@@ -145,6 +145,10 @@ After deploying and before resuming, a deployment-list response that still
 shows the known previous Worker is retried with at most six reads and five
 five-second delays. Another Worker or split traffic stops confirmation
 immediately. Deployment writes are never retried by this check.
+Pause/resume settings also receive bounded read confirmation after their
+acknowledged writes: six reads at most, with five-second delays. An invalid
+setting fails immediately; a setting that never converges retains the failure
+pause. Queue mutations are not repeated to resolve stale reads.
 The website normally keeps serving during a routine release. A Queue fence is
 not a database-write lock; avoid simultaneous owner mutations during upgrades.
 
