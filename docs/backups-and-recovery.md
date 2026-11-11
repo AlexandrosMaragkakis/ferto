@@ -28,6 +28,9 @@ the seven-day window.
   schema-aware history cleanup before reaching the cap. No catalogue rows are
   deleted by these operational scripts.
 
+Use the [retention analysis and dry-run preview](retention.md) to inspect table
+and generation growth from verified backups before defining a deletion policy.
+
 ## Create and verify a backup
 
 ```bash
