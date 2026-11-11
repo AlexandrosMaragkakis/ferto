@@ -14,7 +14,7 @@ The toolchain reviewed on 11 November 2026 is:
 | Vitest | 5.1.0 |
 | Cloudflare Vitest plugin | 1.6.0 |
 | Wrangler | 4.158.0 |
-| Workers types | 5.20261107.1 |
+| Workers types | 5.20261108.1 |
 | Node types | 24.19.2 |
 | TypeScript | 7.0.2 |
 | Playwright | 1.65.0 |
