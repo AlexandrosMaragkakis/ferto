@@ -8,6 +8,11 @@ updates:
       time: "09:00"
       timezone: Europe/Athens
     open-pull-requests-limit: 5
+    # Match declarations to the supported Node runtime; upgrade both deliberately.
+    ignore:
+      - dependency-name: "@types/node"
+        update-types:
+          - version-update:semver-major
     groups:
       toolchain-minor-patch:
         patterns:
