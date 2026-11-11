@@ -6,7 +6,8 @@ A small, self-hosted music-discovery app for finding unfamiliar songs from
 artists in one Spotify owner's library.
 
 Anyone can browse the public catalogue with **Next**, without connecting a
-Spotify account. The owner can **Add** a song to Spotify Liked Songs or choose
+Spotify account. **Back** revisits up to 20 recently shown tracks in the current
+tab; Next follows saved cards before drawing again. The owner can **Add** a song to Spotify Liked Songs or choose
 **Never again** to exclude it permanently. Spotify handles listening through
 its official embedded player and direct track links.
 
@@ -109,8 +110,8 @@ connect your Cloudflare account. Manual local deployment remains available.
 configured update proposals. Deeper architecture is documented in the
 [flow diagrams](docs/flows/README.md) and [refresh measurements](docs/refresh-engine.md).
 
-The [development roadmap](docs/roadmap.md) tracks the next improvements to CI,
-database retention, versioned releases and recently shown tracks.
+The [completed development roadmap](docs/roadmap.md) records the CI reliability,
+retention preview, first versioned release and recently shown tracks work.
 
 ## License and assets
 

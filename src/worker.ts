@@ -32,18 +32,19 @@ async function spotifyAccessToken(env: Env, refreshToken: string): Promise<Spoti
 type PublicCredit = { id: string; name: string };
 type PublicRecommendation = {
   spotify_id: string;
+  recordingId: string;
   title: string;
   artists: PublicCredit[];
   album_name: string;
   image_url: string | null;
   spotify_url: string;
 };
-type LiveRecordingRow = Omit<PublicRecommendation, "artists"> & { artists_json: string };
+type LiveRecordingRow = Omit<PublicRecommendation, "artists" | "recordingId"> & { artists_json: string; recording_key: string };
 type LiveShelfState = { live_generation: string | null; candidate_count: number; live_bucket_count: number };
 type ExcludedPoolSlot = { bucket_artist_id: string; bucket_slot: number; track_slot: number; track_count: number };
 type PoolRecordingRow = LiveRecordingRow & { recording_key: string; excluded: number };
 
-function toPublic(row: LiveRecordingRow): PublicRecommendation {
+async function toPublic(row: LiveRecordingRow): Promise<PublicRecommendation> {
   let artists: PublicCredit[] = [];
   try {
     const parsed = JSON.parse(row.artists_json) as unknown;
@@ -51,7 +52,7 @@ function toPublic(row: LiveRecordingRow): PublicRecommendation {
   } catch {
     artists = [];
   }
-  return { spotify_id: row.spotify_id, title: row.title, artists, album_name: row.album_name, image_url: row.image_url, spotify_url: row.spotify_url };
+  return { spotify_id: row.spotify_id, recordingId: await sha256(row.recording_key), title: row.title, artists, album_name: row.album_name, image_url: row.image_url, spotify_url: row.spotify_url };
 }
 
 async function liveShelfState(env: Env): Promise<LiveShelfState> {
@@ -127,7 +128,7 @@ async function recommendation(request: Request, env: Env): Promise<Response> {
       await removeFromRecommendationPool(env, live, row.recording_key);
       continue;
     }
-    return json({ recommendation: toPublic(row), candidateCount: state.candidate_count }, 200, csrfHeader(request, env));
+    return json({ recommendation: await toPublic(row), candidateCount: state.candidate_count }, 200, csrfHeader(request, env));
   }
   const state = await liveShelfState(env);
   return json({ recommendation: null, candidateCount: state.candidate_count }, 200, csrfHeader(request, env));
@@ -248,7 +249,7 @@ async function resolveRecording(env: Env, trackId: string): Promise<ResolvedReco
   };
 }
 
-async function likeRecording(env: Env, trackId: string): Promise<Response | null> {
+async function likeRecording(env: Env, trackId: string): Promise<Response | string | null> {
   const resolved = await resolveRecording(env, trackId);
   let key = resolved.recordingKey;
   let accessToken: string;
@@ -310,10 +311,10 @@ async function likeRecording(env: Env, trackId: string): Promise<Response | null
   // If promotion linearized after the destination snapshot, this generation is
   // live now; compacting it also repairs counts before the owner request ends.
   if (active && active !== live) await removeFromRecommendationPool(env, active, destinations.activeRecordingKey ?? key);
-  return null;
+  return key;
 }
 
-async function neverRecording(env: Env, trackId: string): Promise<Response | null> {
+async function neverRecording(env: Env, trackId: string): Promise<Response | string> {
   const resolved = await resolveRecording(env, trackId);
   let key = resolved.recordingKey;
   if (key === null || key.startsWith("spotify:")) {
@@ -349,7 +350,7 @@ async function neverRecording(env: Env, trackId: string): Promise<Response | nul
     await removeFromRecommendationPool(env, live, resolved.liveRecordingKey ?? key);
   }
   if (active && active !== live) await removeFromRecommendationPool(env, active, resolved.activeRecordingKey ?? key);
-  return null;
+  return key;
 }
 
 async function ownerWrite(request: Request, env: Env, mode: "like" | "never"): Promise<Response> {
@@ -360,10 +361,10 @@ async function ownerWrite(request: Request, env: Env, mode: "like" | "never"): P
   const body = await jsonObject(request);
   // Only a Spotify track id is accepted; the server resolves the recording key.
   if (!body.trackId || !isTrackId(body.trackId)) return error("valid trackId required", 400);
-  const failure = mode === "like" ? await likeRecording(env, body.trackId) : await neverRecording(env, body.trackId);
-  if (failure) return failure;
+  const result = mode === "like" ? await likeRecording(env, body.trackId) : await neverRecording(env, body.trackId);
+  if (result instanceof Response) return result;
   log(mode === "like" ? "track_liked" : "track_never_again", { track_id: body.trackId });
-  return json({ ok: true });
+  return json({ ok: true, recordingId: typeof result === "string" ? await sha256(result) : null });
 }
 
 async function logout(request: Request, env: Env): Promise<Response> { const blocked = await requireMutationProtection(request, env); if (blocked) return blocked; const raw = parseCookies(request.headers.get("Cookie")).ferto_session; if (raw) await env.DB.prepare("DELETE FROM owner_sessions WHERE session_hash = ?").bind(await hmacSha256(raw, env.SESSION_SECRET)).run(); log("owner_logout"); return json({ ok: true }, 200, { "Set-Cookie": cookie("ferto_session", "", production(env), true, 0) }); }

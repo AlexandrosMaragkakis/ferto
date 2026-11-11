@@ -83,6 +83,10 @@
             <span class="action-disc"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M7 16h18M16 7v18"/></svg></span><span class="action-label">Add</span>
           </button>
         </div>
+        <nav class="recent-navigation" aria-label="Recently shown tracks">
+          <button id="previous" type="button" disabled aria-label="Show previous recommendation"><span aria-hidden="true">←</span> Back</button>
+          <span id="recent-position" aria-live="polite">Recently shown tracks</span>
+        </nav>
         <p id="action-help" class="action-help">Next is for everyone. Only the owner can save or hide songs.</p>
         <p id="status" class="status" role="status"></p>
         <aside id="owner-panel" class="owner-panel" hidden aria-label="Owner controls">
@@ -101,7 +105,7 @@
         <details class="about">
           <summary>About this app &amp; privacy</summary>
           <p>FERTO finds unfamiliar songs from artists in its owner's Spotify library. Recommendations are public. You can browse without connecting a Spotify account; signing in is only for the owner.</p>
-          <p>FERTO stores the owner's music catalogue, exclusions and sign-in session. Your browser remembers the theme and artwork colours, and uses a cookie to protect actions. Short-lived request counts help limit abuse; hosting logs may include request information.</p>
+          <p>FERTO stores the owner's music catalogue, exclusions and sign-in session. Your browser remembers the theme and artwork colours, keeps up to 20 recently shown tracks in this tab, and uses a cookie to protect actions. Short-lived request counts help limit abuse; hosting logs may include request information.</p>
           <p>Artwork and the embedded player load from Spotify. Spotify receives those requests and may use its own cookies. See <a href="https://www.spotify.com/legal/privacy-policy/" target="_blank" rel="noreferrer">Spotify's privacy policy</a>.</p>
         </details>
       </footer>
