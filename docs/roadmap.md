@@ -25,8 +25,11 @@ browser setup has a documented upper time bound. The required production
 Queue drain remains unchanged.
 
 **Validation:** [PR #9](https://github.com/AlexandrosMaragkakis/ferto/pull/9)
-merged after both hosted Verify jobs passed. Full local verification and five
-installer regression checks passed, including termination of a hung child.
+merged after both hosted Verify jobs passed. Follow-up
+[PR #11](https://github.com/AlexandrosMaragkakis/ferto/pull/11) corrected the
+privilege boundary after a hosted timeout exposed a surviving APT process.
+All six installer checks passed on the hosted runner, including termination
+of a root-owned child; full verification passed.
 
 ## 2. Plan database retention
 
