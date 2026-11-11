@@ -31,6 +31,20 @@ async function drain(milliseconds) {
   }
 }
 
+async function confirmActiveVersion(read, expected, previous, wait) {
+  // Deployment-list reads can briefly lag a successful deploy. Retry only the
+  // known previous version; another version or split traffic still fails closed.
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const deployment = activeDeployment(await read(attempt));
+    const version = deployment.versions[0].version_id;
+    if (version === expected) return;
+    if (version !== previous) throw new Error("Active Worker changed to an unexpected version");
+    if (attempt === 5) throw new Error("Deployed Worker did not become visible within bounded confirmation attempts");
+    console.log("Deployment list still shows the previous Worker; retrying its read in five seconds.");
+    await wait(5000);
+  }
+}
+
 export function assertPreparedBackup(backup, target, revision, version, now = Date.now()) {
   const age = now - Date.parse(backup.completedAt);
   const database = target.config.d1_databases.find(binding => binding.binding === "DB");
@@ -45,7 +59,8 @@ export async function deployLocal({ configFile, migrate = false, plan = false, b
   const packaged = productionTarget(join(artifact, "wrangler.jsonc"));
   if (normalizedConfig(target.config) !== normalizedConfig(packaged.config)) throw new Error("Private instance settings differ from the packaged target; rebuild the release");
   const manifest = JSON.parse(await readFile(join(artifact, "manifest.json"), "utf8"));
-  const hooks = { verify: verifyArtifact, run: wrangler, json: wranglerJson, queue: queueState, backup: createBackup, verifyBackup, smoke: releaseSmoke, drain, ...dependencies };
+  const hooks = { verify: verifyArtifact, run: wrangler, json: wranglerJson, queue: queueState, backup: createBackup, verifyBackup, smoke: releaseSmoke, drain,
+    wait: milliseconds => new Promise(resolveWait => setTimeout(resolveWait, milliseconds)), ...dependencies };
   await hooks.verify(root);
   const steps = ["Validate clean revision, checksums and instance target", "Read current deployment, Queue and migration ledger; reject unreviewed migrations", "Create and locally verify a private backup", "Pause delivery and drain old consumers for 16 minutes", migrate ? "Apply explicitly reviewed pending migrations" : "Apply no schema changes", "Deploy the exact artifact", "Verify active version, exact assets, headers and authorization", "Resume and confirm Queue delivery"];
   if (plan) return { plan: true, revision: manifest.revision, origin: packaged.config.vars.APP_ORIGIN, steps };
@@ -94,11 +109,10 @@ export async function deployLocal({ configFile, migrate = false, plan = false, b
       const output = await hooks.run(["deploy", "--no-bundle", "--tag", `local-${manifest.revision.slice(0, 12)}`, "--message", `Verified local release ${manifest.revision}`], opts("deploy"));
       const version = /Current Version ID:\s*([a-f0-9-]{36})/.exec(output)?.[1];
       if (!version) throw new Error("The deployed version ID was not returned");
-      const deployed = activeDeployment(await hooks.json(["deployments", "list"], opts("deployed")));
-      if (deployed.versions[0].version_id !== version) throw new Error("Active Worker version differs from the deployment result");
+      await confirmActiveVersion(attempt => hooks.json(["deployments", "list"], opts(attempt ? `deployed-${attempt + 1}` : "deployed")), version, receipt.previousVersion, hooks.wait);
       const smoke = await hooks.smoke({ artifact });
       await privateFile(join(directory, "smoke.json"), JSON.stringify(smoke, null, 2) + "\n");
-      if (activeDeployment(await hooks.json(["deployments", "list"], opts("before-resume"))).versions[0].version_id !== version) throw new Error("Active Worker changed during smoke verification");
+      await confirmActiveVersion(attempt => hooks.json(["deployments", "list"], opts(attempt ? `before-resume-${attempt + 1}` : "before-resume")), version, receipt.previousVersion, hooks.wait);
       await hooks.run(["queues", "resume-delivery", "ferto-refresh"], opts("resume"));
       if ((await hooks.queue(packaged, directory)).settings.delivery_paused) throw new Error("Queue delivery did not resume");
       const result = { ...receipt, status: "complete", version, completedAt: new Date().toISOString() };

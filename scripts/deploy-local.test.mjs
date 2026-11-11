@@ -19,12 +19,19 @@ async function fixture(options = {}) {
   await writeFile(join(root, ".release/wrangler.jsonc"), JSON.stringify(packaged));
   await writeFile(join(root, ".release/manifest.json"), JSON.stringify({ revision: "a".repeat(40), files: { "migrations/0001.sql": "fixture" } }));
   const events = []; let paused = Boolean(options.alreadyPaused); let version = "11111111-1111-4111-8111-111111111111";
+  const previousVersion = version;
+  let deployed = false; let staleReads = options.staleDeploymentReads ?? 0;
   const deployedVersion = "22222222-2222-4222-8222-222222222222";
   const dependencies = {
     verify: async () => { events.push("verify"); },
     queue: async () => ({ settings: { delivery_paused: paused } }),
     json: async args => {
-      if (args[0] === "deployments") return [{ created_on: "2026-01-01T00:00:00Z", versions: [{ version_id: version, percentage: 100 }] }];
+      if (args[0] === "deployments") {
+        if (deployed && options.splitTraffic) return [{ created_on: "2026-01-01T00:00:00Z", versions: [{ version_id: previousVersion, percentage: 50 }, { version_id: deployedVersion, percentage: 50 }] }];
+        const observed = deployed && options.unexpectedAfterDeploy ? "33333333-3333-4333-8333-333333333333"
+          : deployed && (options.neverVisible || staleReads-- > 0) ? previousVersion : version;
+        return [{ created_on: "2026-01-01T00:00:00Z", versions: [{ version_id: observed, percentage: 100 }] }];
+      }
       return [{ success: true, results: options.pendingMigration ? [] : [{ name: "0001.sql" }] }];
     },
     backup: async () => { events.push("backup"); if (options.backupFails) throw new Error("backup failed"); return { directory: join(root, "backups/fixture") }; },
@@ -37,7 +44,7 @@ async function fixture(options = {}) {
         events.push(args[1]); paused = args[1] === "pause-delivery"; return "";
       }
       if (args[0] === "d1") { events.push("migrate"); if (options.migrationFails) throw new Error("migration failed"); return ""; }
-      if (args[0] === "deploy") { events.push("deploy"); version = deployedVersion; return `Current Version ID: ${deployedVersion}`; }
+      if (args[0] === "deploy") { events.push("deploy"); deployed = true; version = deployedVersion; return `Current Version ID: ${deployedVersion}`; }
       throw new Error("Unexpected command");
     },
     drain: async milliseconds => {
@@ -45,7 +52,8 @@ async function fixture(options = {}) {
       if (options.changedArtifact) await writeFile(join(root, ".release/manifest.json"), JSON.stringify({ revision: "b".repeat(40), files: {} }));
       if (options.externalDeploy) version = "33333333-3333-4333-8333-333333333333";
     },
-    smoke: async () => { events.push("smoke"); if (options.smokeFails) throw new Error("wrong assets"); return { revision: "a".repeat(40) }; },
+    wait: async milliseconds => { assert.equal(milliseconds, 5000); events.push("wait"); },
+    smoke: async () => { events.push("smoke"); if (options.smokeFails) throw new Error("wrong assets"); if (options.staleBeforeResume) staleReads = 2; return { revision: "a".repeat(40) }; },
   };
   return { root, configFile, dependencies, events, paused: () => paused };
 }
@@ -65,6 +73,32 @@ test("an offline plan validates the artifact and performs no provider calls", as
   try { const result = await deployLocal({ ...f, plan: true }); assert.equal(result.plan, true); assert.deepEqual(f.events, ["verify"]); }
   finally { await rm(f.root, { recursive: true, force: true }); }
 });
+
+for (const options of [{ staleDeploymentReads: 2 }, { staleBeforeResume: true }]) {
+  test(`stale deployment reads recover without repeating a write (${JSON.stringify(options)})`, async () => {
+    const f = await fixture(options);
+    try {
+      assert.equal((await deployLocal(f)).status, "complete");
+      assert.equal(f.events.filter(event => event === "wait").length, 2);
+      assert.equal(f.events.filter(event => event === "deploy").length, 1);
+      assert.equal(f.events.filter(event => event === "smoke").length, 1);
+      assert.equal(f.events.at(-1), "resume-delivery"); assert.equal(f.paused(), false);
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+}
+
+for (const [name, options, waits] of [["persistently stale reads", { neverVisible: true }, 5], ["an unexpected Worker", { unexpectedAfterDeploy: true }, 0], ["split traffic", { splitTraffic: true }, 0]]) {
+  test(`${name} stops confirmation and keeps delivery paused`, async () => {
+    const f = await fixture(options);
+    try {
+      await assert.rejects(deployLocal(f), /Queue pause was requested/);
+      assert.equal(f.events.filter(event => event === "wait").length, waits);
+      assert.equal(f.events.filter(event => event === "deploy").length, 1);
+      assert.ok(!f.events.includes("smoke")); assert.ok(!f.events.includes("resume-delivery"));
+      assert.equal(f.paused(), true);
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+}
 
 test("CI can reuse its saved verified backup without a second export, but stale backups stop before pausing", async () => {
   for (const staleBackup of [false, true]) {
