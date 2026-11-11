@@ -170,3 +170,22 @@ test("blocked session storage still allows in-memory Back and Next", async ({ pa
   await page.locator("#another").click(); await expectCard(page, picks[1]);
   expect(draws).toHaveLength(2);
 });
+
+test("an empty fresh draw after reload leaves the last card reachable with Back", async ({ page }) => {
+  await mockOwner(page);
+  await page.clock.install();
+  const item = track(1);
+  let draws = 0;
+  await page.route("**/api/recommendation*", route => route.fulfill({ json: {
+    recommendation: ++draws === 1 ? item : null, candidateCount: draws === 1 ? 1 : 0,
+  } }));
+  await page.goto("/"); await expectCard(page, item);
+  await page.reload();
+  await expect(page.locator("#title")).toHaveText("All quiet for now.");
+  await expect(page.locator("#recent-position")).toHaveText("1 recently shown");
+  await page.locator("#previous").click(); await expectCard(page, item);
+  await expect(page.locator("#previous")).toBeDisabled();
+  await page.clock.fastForward(31_000);
+  expect(draws).toBe(2); // Navigating Back cancels the empty-shelf poll.
+  await expectCard(page, item);
+});

@@ -83,6 +83,12 @@ export class RecentHistory {
     if (!this.canForward) return null;
     this.cursor++; this.persist(); return this.current;
   }
+  deselect(): null {
+    // An empty fresh draw has no selected card, but Back can still visit the
+    // most recently shown card rather than skipping it or losing the history.
+    this.cursor = this.items.length;
+    this.persist(); return null;
+  }
   removeRecording(track: RecentTrack, confirmedId?: unknown): RecentTrack | null {
     const keys = new Set([key(track)]);
     if (validId(confirmedId)) keys.add(confirmedId);

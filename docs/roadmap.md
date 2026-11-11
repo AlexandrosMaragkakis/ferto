@@ -97,11 +97,11 @@ entries. Private instance files and operational evidence remain outside it.
 **Done when:** Back/Next navigation works within the documented history bound,
 owner decisions remain authoritative, and desktop/mobile browser checks pass.
 
-**Validation:** full verification passed, including seven history-model tests,
+**Validation:** full verification passed, including eight history-model tests,
 server checks for stable opaque identities and authoritative action responses,
-and 54 desktop/mobile browser checks. The UI checks cover cached navigation,
+and 56 desktop/mobile browser checks. The UI checks cover cached navigation,
 the 20-card limit, reload/storage denial, confirmed alias removal, unconfirmed
-and expired actions, pending/failed draws and late artwork events. Fictional
+and expired actions, pending/failed/empty draws and late artwork events. Fictional
 before/after desktop/mobile captures and the 320px width review are linked from
 [development](development.md#browser-checks-and-releases).
 

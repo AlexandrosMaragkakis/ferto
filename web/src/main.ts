@@ -263,7 +263,7 @@ async function load(avoidRepeat = false) {
       scheduleEmptyPoll();
       return;
     }
-    paint(body.recommendation ? recent.append(body.recommendation) : null);
+    paint(body.recommendation ? recent.append(body.recommendation) : recent.deselect());
     message(body.recommendation ? "" : EMPTY_MESSAGE);
     scheduleEmptyPoll();
   } catch {
@@ -420,6 +420,7 @@ function navigateRecent(direction: "back" | "forward"): boolean {
   if (loadPending || actionPending) return false;
   const item = direction === "back" ? recent.back() : recent.forward();
   if (!item) return false;
+  window.clearTimeout(emptyPollTimer);
   recommendationFailed = false;
   paint(item); message(); return true;
 }

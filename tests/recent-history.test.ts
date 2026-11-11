@@ -54,6 +54,14 @@ describe("recently shown cards", () => {
     expect(history.forward()).toBeNull();
     history.append(track(3)); expect(history.size).toBe(2);
   });
+  it("keeps the most recent card reachable after an empty fresh draw", () => {
+    const history = new RecentHistory();
+    history.append(track(1)); history.deselect();
+    expect(history.current).toBeNull();
+    expect(history.canBack).toBe(true);
+    expect(history.back()?.title).toBe("Track 1");
+    expect(history.canBack).toBe(false);
+  });
   it("persists the bounded per-tab cursor and confirmed removals", () => {
     const data = storage();
     const history = new RecentHistory(data);
