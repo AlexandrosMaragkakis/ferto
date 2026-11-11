@@ -27,6 +27,12 @@ deployment. These bounds address package-mirror/download stalls without
 changing any release, backup or Queue safeguard. Regression checks exercise
 temporary failures, persistent failures and hung child processes using a fake
 installer; they require GNU `timeout` and run in the Linux CI environment.
+The runner executes the timeout and installer together through passwordless
+sudo so root-owned APT descendants are terminated too; a regression check
+exercises that privilege boundary on the hosted runner. Chromium is installed
+at the job's shared `PLAYWRIGHT_BROWSERS_PATH`, so tests running as the ordinary
+runner user use the same downloaded browser. This avoids a lingering APT lock
+after a timed-out attempt.
 
 The separate production job runs only after verification succeeds, for a push
 to `main` in the explicitly configured repository with deployment enabled.
