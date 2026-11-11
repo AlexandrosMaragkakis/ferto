@@ -104,6 +104,7 @@ jobs:
         with:
           name: ferto-backup-${{ github.run_id }}-${{ github.run_attempt }}
           path: .local/ci-upload/backup.gpg
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 14
       - name: Download the saved encrypted backup for verification
@@ -128,5 +129,6 @@ jobs:
         with:
           name: ferto-operations-${{ github.run_id }}-${{ github.run_attempt }}
           path: .local/ci-logs/operations.gpg
+          include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 14
