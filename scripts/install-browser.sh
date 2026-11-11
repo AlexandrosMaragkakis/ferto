@@ -17,10 +17,19 @@ if (( 10#$limit < 1 || 10#$grace < 1 || 10#$grace > 5 || 10#$delay > 10 )); then
   exit 2
 fi
 status=1
+node_bin="$(command -v node)"
+timeout_bin="$(command -v timeout)"
+launcher=()
+if [[ "${GITHUB_ACTIONS:-}" == "true" ]] && (( EUID != 0 )); then
+  # Playwright otherwise launches root-owned apt under an unprivileged timeout.
+  # A timed-out apt could survive and hold the package lock during the retry.
+  : "${PLAYWRIGHT_BROWSERS_PATH:?CI must set a shared browser installation path}"
+  launcher=(sudo -n env "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH")
+fi
 for attempt in 1 2; do
   echo "Browser installation attempt $attempt/2 (timeout ${limit}s; termination grace ${grace}s)."
-  if timeout --signal=TERM --kill-after="${grace}s" "${limit}s" \
-    node node_modules/@playwright/test/cli.js install --with-deps chromium; then
+  if "${launcher[@]}" "$timeout_bin" --signal=TERM --kill-after="${grace}s" "${limit}s" \
+    "$node_bin" node_modules/@playwright/test/cli.js install --with-deps chromium; then
     echo 'Browser installation completed.'
     exit 0
   else
