@@ -34,6 +34,8 @@ Production delivery also exposed a briefly stale deployment-list response.
 Version confirmation now retries only the known previous Worker within bounded
 attempts; regression checks preserve immediate refusal of unexpected versions
 and split traffic, and preserve the single deployment write and Queue fence.
+Pause/resume confirmation similarly tolerates briefly stale settings through
+bounded reads, retaining the failure pause for invalid/unconfirmed results.
 
 ## 2. Plan database retention
 

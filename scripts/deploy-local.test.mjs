@@ -21,10 +21,16 @@ async function fixture(options = {}) {
   const events = []; let paused = Boolean(options.alreadyPaused); let version = "11111111-1111-4111-8111-111111111111";
   const previousVersion = version;
   let deployed = false; let staleReads = options.staleDeploymentReads ?? 0;
+  let queueChange = null; let staleQueueReads = 0;
   const deployedVersion = "22222222-2222-4222-8222-222222222222";
   const dependencies = {
     verify: async () => { events.push("verify"); },
-    queue: async () => ({ settings: { delivery_paused: paused } }),
+    queue: async () => {
+      if (queueChange === "pause" && options.malformedAfterPause) return { settings: { delivery_paused: "unknown" } };
+      const neverVisible = queueChange === "pause" ? options.neverPauseVisible : queueChange === "resume" ? options.neverResumeVisible : false;
+      const stale = queueChange && (neverVisible || staleQueueReads-- > 0);
+      return { settings: { delivery_paused: stale ? !paused : paused } };
+    },
     json: async args => {
       if (args[0] === "deployments") {
         if (deployed && options.splitTraffic) return [{ created_on: "2026-01-01T00:00:00Z", versions: [{ version_id: previousVersion, percentage: 50 }, { version_id: deployedVersion, percentage: 50 }] }];
@@ -41,7 +47,10 @@ async function fixture(options = {}) {
     },
     run: async args => {
       if (args[0] === "queues") {
-        events.push(args[1]); paused = args[1] === "pause-delivery"; return "";
+        events.push(args[1]); paused = args[1] === "pause-delivery";
+        queueChange = paused ? "pause" : "resume";
+        staleQueueReads = (paused ? options.stalePauseReads : options.staleResumeReads) ?? 0;
+        return "";
       }
       if (args[0] === "d1") { events.push("migrate"); if (options.migrationFails) throw new Error("migration failed"); return ""; }
       if (args[0] === "deploy") { events.push("deploy"); deployed = true; version = deployedVersion; return `Current Version ID: ${deployedVersion}`; }
@@ -95,6 +104,31 @@ for (const [name, options, waits] of [["persistently stale reads", { neverVisibl
       assert.equal(f.events.filter(event => event === "wait").length, waits);
       assert.equal(f.events.filter(event => event === "deploy").length, 1);
       assert.ok(!f.events.includes("smoke")); assert.ok(!f.events.includes("resume-delivery"));
+      assert.equal(f.paused(), true);
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+}
+
+for (const options of [{ stalePauseReads: 2 }, { staleResumeReads: 2 }]) {
+  test(`Queue settings converge without repeating their mutation (${JSON.stringify(options)})`, async () => {
+    const f = await fixture(options);
+    try {
+      assert.equal((await deployLocal(f)).status, "complete");
+      assert.equal(f.events.filter(event => event === "wait").length, 2);
+      for (const event of ["pause-delivery", "deploy", "smoke", "resume-delivery"]) assert.equal(f.events.filter(value => value === event).length, 1);
+      assert.equal(f.paused(), false);
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+}
+
+for (const [name, options, waits, deploys] of [["unconfirmed pause", { neverPauseVisible: true }, 5, 0], ["unconfirmed resume", { neverResumeVisible: true }, 5, 1], ["invalid Queue setting", { malformedAfterPause: true }, 0, 0]]) {
+  test(`${name} fails closed after bounded reads`, async () => {
+    const f = await fixture(options);
+    try {
+      await assert.rejects(deployLocal(f), /Queue pause was requested/);
+      assert.equal(f.events.filter(event => event === "wait").length, waits);
+      assert.equal(f.events.filter(event => event === "deploy").length, deploys);
+      assert.equal(f.events.filter(event => event === "resume-delivery").length, deploys);
       assert.equal(f.paused(), true);
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });
