@@ -109,6 +109,9 @@ connect your Cloudflare account. Manual local deployment remains available.
 configured update proposals. Deeper architecture is documented in the
 [flow diagrams](docs/flows/README.md) and [refresh measurements](docs/refresh-engine.md).
 
+The [development roadmap](docs/roadmap.md) tracks the next improvements to CI,
+database retention, versioned releases and recently shown tracks.
+
 ## License and assets
 
 The code, documentation and original FERTO branding/illustrations are under the

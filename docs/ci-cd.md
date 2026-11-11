@@ -17,6 +17,17 @@ TypeScript, application/simulator/operational/browser tests and the real demo,
 then packages a generic artifact. Generic artifacts and browser failure output
 expire after three days.
 
+Both jobs pin the standard Ubuntu 24.04 runner, which is supported by the
+locked Playwright toolchain. Browser setup uses `scripts/install-browser.sh`:
+two attempts, each limited to 120 seconds with a five-second termination grace,
+and one ten-second retry delay. The installer is bounded to about 4 minutes
+20 seconds; the workflow step has a six-minute hard limit. Installer output
+and exit codes remain visible. Exhausted retries fail Verify and prevent
+deployment. These bounds address package-mirror/download stalls without
+changing any release, backup or Queue safeguard. Regression checks exercise
+temporary failures, persistent failures and hung child processes using a fake
+installer; they require GNU `timeout` and run in the Linux CI environment.
+
 The separate production job runs only after verification succeeds, for a push
 to `main` in the explicitly configured repository with deployment enabled.
 It uses the production environment and receives the Cloudflare token only in
