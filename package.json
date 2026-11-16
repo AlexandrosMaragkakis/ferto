@@ -46,12 +46,12 @@
     "test:publication": "node --test scripts/deployment-config.test.mjs scripts/check-secrets.test.mjs"
   },
   "devDependencies": {
-    "@cloudflare/vitest-plugin": "^1.6.0",
+    "@cloudflare/vitest-plugin": "^1.8.1",
     "@cloudflare/workers-types": "^5.20261108.1",
     "@playwright/test": "^1.65.0",
     "@types/node": "^24.19.2",
     "typescript": "^7.0.2",
-    "vite": "^8.3.6",
+    "vite": "^8.3.8",
     "vitest": "^5.1.0",
     "wrangler": "^4.157.0"
   },
