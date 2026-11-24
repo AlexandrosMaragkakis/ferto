@@ -26,6 +26,14 @@ The generated files use strict JSON despite the `.jsonc` extension; retain
 that format when editing settings so packaging and validation can read them.
 
 The default resources are Worker/D1 `ferto` and Queue `ferto-refresh`.
+The public template also binds `STORAGE_CONTROL` to the SQLite-backed
+`StorageControl` Durable Object with the additive `storage-control-v1` class
+migration. Keep both the `durable_objects` and `migrations` sections in an
+existing private configuration when updating. Wrangler provisions the namespace
+on deployment; local checks/demo simulate it without Cloudflare credentials.
+The object is scoped by the configured Spotify client and owner. Preserve that
+namespace and those identifiers during routine releases and recovery.
+This uses the existing Workers Free plan; it does not enable paid billing.
 Worker and Queue names stay fixed in the operational helpers. D1 is selected
 through the `DB` binding, so recovery can intentionally use a replacement
 `database_name` and UUID without renaming the Worker/Queue. Keep those settings

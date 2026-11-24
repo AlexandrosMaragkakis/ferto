@@ -105,6 +105,19 @@ External player requests were blocked for these captures; the Spotify frame
 therefore has no remote content. The official embed and its fallback behavior
 are covered by the browser checks.
 
+Capacity-state UI review uses the same current build with fictional tracks and
+synthetic owner responses. The normal state has no capacity message; the paused
+state explains why discovery waits while existing songs remain available.
+
+| View | Normal storage | Capacity pause |
+| --- | --- | --- |
+| Desktop | [Normal](images/d1-capacity-normal-desktop.png) | [Paused](images/d1-capacity-paused-desktop.png) |
+| Mobile | [Normal](images/d1-capacity-normal-mobile.png) | [Paused](images/d1-capacity-paused-mobile.png) |
+
+External player requests are blocked in these captures too. Failure checks cover
+partial Add reconciliation, failed Never, strict durable request budgets while
+D1 rejects writes, persistent background pauses and recovery polling.
+
 Verification also runs `npm run test:demo` against the actual demo command in
 a temporary folder, with no env file or provider credentials. It migrates and
 seeds isolated D1 state, checks recommendations and Next, and verifies that
@@ -156,5 +169,5 @@ Sequence diagrams for every flow described above live in
 
 - Vite frontend
 - Cloudflare Worker API
-- Cloudflare D1 database and Queue
+- Cloudflare D1 database, Queue and SQLite-backed storage-control Durable Object
 - Spotify Web API (no Web Playback SDK)

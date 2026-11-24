@@ -3,6 +3,9 @@ import { randomToken } from "./security";
 import { refreshSpotifyAccessToken } from "./spotify";
 import { fetchWithDeadline } from "./request";
 import { readTrackCache, writeTrackCache } from "./track-cache";
+import { cleanupExpiredCaches } from "./cache-maintenance";
+import { checkCapacity, recordStorageFailure, storageControl, type Capacity } from "./capacity";
+import { storageFailure } from "./storage-failure";
 import { invalidateServiceToken, readServiceToken, writeServiceToken, type ServiceToken } from "./service-token-cache";
 import { JOB_MUTATION_GUARD, jobMutationBindings, type JobMutationGuard } from "./rebuild-guard";
 import { progressStatement, countedRequest, requestEndpoint, saveRequestUsage, numericProgress, requestUsage, type RequestUsage, type RequestEndpoint } from "./rebuild-progress";
@@ -93,7 +96,10 @@ type StateRow = {
 };
 
 export type RefreshStatus = {
-  state: "idle" | "active" | "waiting" | "failed";
+  state: "idle" | "active" | "waiting" | "failed" | "paused";
+  capacity?: Capacity;
+  pendingSaves?: number;
+  databaseUsage?: { date: string; rowsRead: number; rowsWritten: number; basis: "this-worker-observed" };
   refreshId: string | null;
   phase: RefreshPhase | null;
   phaseLabel: string | null;
@@ -122,6 +128,7 @@ type AdvanceOutcome =
   | { kind: "scheduled"; delaySeconds: number }
   | { kind: "complete"; outcome: PromotionOutcome }
   | { kind: "busy"; delaySeconds: number }
+  | { kind: "paused" }
   | { kind: "failed" };
 
 type WarningCounts = {
@@ -1473,6 +1480,7 @@ async function failSystemically(env: Env, job: RebuildJobRow, message: string): 
 }
 
 async function handleFailure(env: Env, job: RebuildJobRow, cause: unknown): Promise<AdvanceOutcome> {
+  if (await recordStorageFailure(env, cause)) return { kind: "paused" };
   const failure = cause instanceof RefreshFailure ? cause : new RefreshFailure(job.phase, 0, safeReason(cause instanceof Error ? cause.message : cause, env));
   const guard = "WHERE singleton = 1 AND generation = ? AND revision = ? AND phase = ? AND status = 'active'";
   if (failure.status === 429) {
@@ -1547,11 +1555,13 @@ async function advance(env: Env, job: RebuildJobRow): Promise<AdvanceOutcome> {
   } catch (cause) {
     return await handleFailure(env, job, cause);
   } finally {
-    await saveRequestUsage(env, job.generation, job.usage ?? {});
+    try { await saveRequestUsage(env, job.generation, job.usage ?? {}); }
+    catch (cause) { if (!await recordStorageFailure(env, cause)) throw cause; }
   }
 }
 
 export async function startRebuild(env: Env): Promise<RefreshStatus> {
+  if ((await checkCapacity(env)).capacity.paused) return statusSnapshot(env);
   const generation = `v4-${randomToken()}`;
   const timestamp = now();
   // Every cleanup/history change is conditional on winning the singleton
@@ -1567,12 +1577,10 @@ export async function startRebuild(env: Env): Promise<RefreshStatus> {
     claimed("DELETE FROM operational_activity WHERE hour < ?", timestamp - 30 * DAY_MS),
     claimed("DELETE FROM quota_interruptions WHERE occurred_at < ?", timestamp - 30 * DAY_MS),
     claimed("INSERT INTO refresh_history(generation,started_at,base_generation) SELECT ?,?,live_generation FROM refresh_state WHERE singleton=1", generation, timestamp),
-    claimed("DELETE FROM spotify_track_cache WHERE expires_at <= ?", timestamp),
-    claimed("DELETE FROM recording_identity_cache WHERE expires_at <= ?", timestamp),
-    claimed("DELETE FROM track_availability WHERE expires_at <= ?", timestamp),
+    // Large metadata/discovery caches drain in bounded watchdog batches, even
+    // while this job is active. Starting a refresh must not delete a backlog.
     claimed("DELETE FROM album_availability_pages WHERE expires_at <= ? AND NOT EXISTS (SELECT 1 FROM album_track_pages p WHERE p.context = album_availability_pages.context AND p.album_id = album_availability_pages.album_id AND p.cursor = album_availability_pages.cursor)", timestamp),
     claimed("DELETE FROM service_token_cache WHERE expires_at <= ?", timestamp),
-    claimed("DELETE FROM album_track_pages WHERE expires_at <= ?", timestamp),
     claimed("DELETE FROM playlist_snapshots WHERE completed_at <= ?", timestamp - PLAYLIST_CACHE_TTL_MS),
     claimed(`DELETE FROM playlist_snapshot_pages WHERE NOT EXISTS (SELECT 1 FROM playlist_snapshots s
       WHERE s.context = playlist_snapshot_pages.context AND s.spotify_id = playlist_snapshot_pages.spotify_id
@@ -1618,6 +1626,7 @@ async function recoverLegacyTransientFailure(env: Env, job: RebuildJobRow): Prom
 
 /** Resume legacy transient failures; start other idle/failed work or re-send an active wake. */
 export async function startOrWakeRebuild(env: Env): Promise<RefreshStatus> {
+  if ((await checkCapacity(env)).capacity.paused) return statusSnapshot(env);
   let job = await currentJob(env);
   if (job) job = await recoverLegacyTransientFailure(env, job);
   if (!job || job.status === "failed") return startRebuild(env);
@@ -1707,6 +1716,7 @@ export async function consumeRefreshQueue(batch: MessageBatch<RefreshMessage>, e
       continue;
     }
     try {
+      if ((await checkCapacity(env)).capacity.paused) { message.ack(); continue; }
       let job = await currentJob(env);
       if (!job || job.generation !== message.body.generation) {
         message.ack();
@@ -1743,6 +1753,12 @@ export async function consumeRefreshQueue(batch: MessageBatch<RefreshMessage>, e
       }
       message.ack();
     } catch (cause) {
+      if (storageFailure(cause)) {
+        try { await recordStorageFailure(env, cause); message.ack(); }
+        catch { message.retry({ delaySeconds: 900 }); }
+        console.error(JSON.stringify({ event: "rebuild_storage_paused" }));
+        continue;
+      }
       console.error(JSON.stringify({ event: "rebuild_queue_failed", reason: safeReason(cause instanceof Error ? cause.message : cause, env) }));
       message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(message.attempts, 5)) });
     }
@@ -1762,7 +1778,8 @@ function renderWarnings(raw: string | null | undefined): string[] {
 }
 
 export async function statusSnapshot(env: Env): Promise<RefreshStatus> {
-  const [job, state] = await Promise.all([
+  const [control, job, state] = await Promise.all([
+    storageControl(env).snapshot(),
     currentJob(env),
     env.DB.prepare("SELECT live_generation, refreshed_at, last_publication_at, candidate_count, last_error, pending_low, last_outcome, last_outcome_at, next_refresh_at, warnings_json, last_progress_json, last_request_counts_json, last_progress_started_at, last_progress_partial FROM refresh_state WHERE singleton = 1").first<StateRow>(),
   ]);
@@ -1772,9 +1789,12 @@ export async function statusSnapshot(env: Env): Promise<RefreshStatus> {
   const progress = numericProgress(job ? job.progress_json : state?.last_progress_json);
   const requests = requestUsage(job ? job.request_counts_json : state?.last_request_counts_json);
   const retrySeconds = job?.retry_at && job.retry_at > now() ? Math.max(1, Math.ceil((job.retry_at - now()) / 1000)) : undefined;
-  const jobState = !job ? "idle" : job.status === "failed" ? "failed" : retrySeconds ? "waiting" : "active";
+  const jobState = control.capacity.paused ? "paused" : !job ? "idle" : job.status === "failed" ? "failed" : retrySeconds ? "waiting" : "active";
   return {
     state: jobState,
+    capacity: control.capacity,
+    pendingSaves: control.pendingSaves,
+    databaseUsage: control.usage,
     refreshId: job?.generation ?? null,
     phase: job?.phase ?? null,
     phaseLabel: job ? PHASE_LABELS[job.phase] : null,
@@ -1815,6 +1835,13 @@ export function nextWeeklyCronAt(from: number): number {
  */
 export async function scheduledTick(env: Env, scheduledTime: number, cron = CRON_EXPRESSION): Promise<void> {
   if (cron === WATCHDOG_CRON_EXPRESSION) {
+    try { await cleanupExpiredCaches(env); }
+    catch (cause) {
+      // Cache maintenance must not prevent recovery of a lost refresh wake.
+      // D1 exceptions may include SQL/bindings, so log only a fixed category.
+      console.error(JSON.stringify({ event: "expired_cache_cleanup_failed" }));
+      await recordStorageFailure(env, cause);
+    }
     // Maintenance is bounded even if a quota-blocked refresh lasts for months.
     const scheduled = new Date(scheduledTime);
     if (scheduled.getUTCHours() === 0 && scheduled.getUTCMinutes() === 0) {
@@ -1824,6 +1851,7 @@ export async function scheduledTick(env: Env, scheduledTime: number, cron = CRON
           SELECT rowid FROM quota_interruptions ORDER BY occurred_at DESC LIMIT 2000)`).bind(now() - 30 * DAY_MS),
       ]);
     }
+    if ((await checkCapacity(env, true)).capacity.paused) return;
     const job = await currentJob(env);
     // Only recover overdue active work. In particular, an idle/failed job must
     // not turn this frequent maintenance tick into a new catalogue refresh.
@@ -1835,6 +1863,7 @@ export async function scheduledTick(env: Env, scheduledTime: number, cron = CRON
     return;
   }
   if (cron !== CRON_EXPRESSION) return;
+  if ((await checkCapacity(env)).capacity.paused) return;
   await env.DB.prepare("UPDATE refresh_state SET next_refresh_at = ? WHERE singleton = 1").bind(nextWeeklyCronAt(scheduledTime)).run();
   await startOrWakeRebuild(env);
 }

@@ -1,8 +1,90 @@
 # Database retention analysis and preview
 
 FERTO retains public catalogue generations because owner actions resolve an
-old card's Spotify id through that history. This guide defines a conservative
-cleanup preview; it does not introduce deletion or scheduled pruning.
+old card's Spotify id through that history. The offline preview below identifies
+cleanup candidates without deleting data. The application separately performs
+the bounded expired-cache maintenance described here.
+
+## Application cache maintenance
+
+The existing 15-minute watchdog removes at most 32 expired rows per table from
+`spotify_track_cache`, `recording_identity_cache`, `track_availability` and
+`album_track_pages`. It uses each table's expiry index, keeps fresh entries and
+does not depend on starting or finishing a refresh. Each batch reevaluates expiry
+inside its DELETE statements, including after a concurrent cache refresh.
+
+The nominal 96 daily ticks can remove at most 12,288 rows across these tables;
+primary-key and expiry-index writes also count against D1 usage. Duplicate ticks
+can add work, and the allowance is shared with all databases and other app work.
+Structured `expired_cache_cleanup` logs include deletion counts and actual D1
+rows read/written. `expired_cache_cleanup_failed` records a failed batch without
+exception details or preventing the watchdog from recovering overdue work.
+
+This maintenance never prunes catalogue generations, exclusions, aliases, active
+jobs, playlist snapshots or album-availability markers. In particular, an expired
+availability marker still invalidates a fresh album-discovery page. The remaining
+cache tables keep their existing refresh-start cleanup policies.
+
+Removing expired rows can make pages reusable; the offline estimates below do
+not establish how much Cloudflare's reported physical storage will fall. The
+[capacity safeguards roadmap](tasks/d1-capacity.md) keeps actual release/storage
+verification and storage-exhaustion handling as separate completion gates.
+
+## Capacity protection and recovery
+
+The SQLite-backed `STORAGE_CONTROL` Durable Object keeps request budgets,
+capacity/usage state and pending Spotify saves outside catalogue D1. It is
+available on the [Workers Free plan](https://developers.cloudflare.com/durable-objects/platform/pricing/).
+The namespace coordinates one configured Spotify client/owner and does no
+provider requests. Its own Free allowances still apply; failure never disables
+request protection or silently enables unrestricted browsing.
+
+Capacity uses D1's supported [`meta.size_after`](https://developers.cloudflare.com/d1/worker-api/return-object/)
+from one constant-size query, at most every five minutes during refresh work
+and explicitly after each 15-minute cleanup. The current Free assumptions are:
+
+| State | Threshold | Behavior |
+| --- | --- | --- |
+| Warning | 375 MB (75% of 500 MB) | Owner status shows measured storage |
+| Pause background growth | 400 MB (80%) | Preserve 100 MB of headroom; manual/weekly/queued wakes respect the pause |
+| Resume after storage pressure | At or below 350 MB (70%) | A bounded insert/delete probe must also confirm writes are available after a storage error |
+
+These conservative thresholds leave substantially more headroom than a normal
+bounded refresh unit and use hysteresis to avoid repeated pause/resume cycles.
+Stale observations cannot overwrite newer ones. Missing measurements or an
+unavailable control object stop new background work until a later check succeeds.
+An actual storage error persists a pause even if the last size observation was low.
+
+The Worker also accumulates its observed D1 row metadata outside D1 and pauses
+background growth at 3.5 million reads or 70,000 writes in a UTC day. These are
+**this Worker's observed totals**, not remaining account allowance: interrupted
+calls and dashboard/CLI/other-database activity can be absent. Use `npm run
+ops:status` for account-wide GraphQL totals. Actual daily-quota errors hold the
+pause until the next UTC day. The owner status distinguishes storage and daily
+allowance pauses; it polls a paused state once a minute while the watchdog checks
+for recovery every 15 minutes. Background work never bypasses a Spotify deadline.
+
+Public discovery's shared rate limits no longer write D1. Owner operations keep
+their authentication, Origin and CSRF protections. A failed exclusion retains
+the card and shows an explicit error. A Spotify-confirmed Add with failed local
+bookkeeping returns a partial outcome; the card/history stay available for retry.
+Up to four confirmed saves per maintenance tick are reconciled using D1 only,
+without a repeated Spotify mutation. Confirmed receipts are retained until that
+idempotent bookkeeping succeeds; unconfirmed attempts are not replayed.
+
+After a capacity warning/pause, inspect the owner panel, `npm run ops:status`
+and the structured maintenance logs. Allow bounded expiry cleanup to run and
+verify real Cloudflare size/usage rather than assuming the offline estimate is
+reclaimed space. Recovery checks resume the same saved generation/cursor. If
+capacity remains insufficient, retain backups and review an explicit retention
+or capacity change; no automatic paid upgrade or catalogue deletion occurs.
+
+The control namespace is durable across releases and must not be deleted or
+renamed to clear a pause. D1 SQL backups do not contain its counters or pending
+receipts. Preserve its binding and class migration during recovery. Spotify is
+the external authority for confirmed library saves; after restoring an older D1
+snapshot, retry/reconcile retained receipts and refresh known tracks as needed.
+Permanent exclusions and catalogue identities remain in the D1 backup.
 
 ## Inspect a verified backup
 
@@ -57,7 +139,7 @@ counts per generation/table; it does not execute any removal.
 Never decisions, their legacy identities/checks, schema history, playlist
 snapshots/pages and authentication/request state are always retained by this
 tool. Existing application maintenance remains responsible for its own bounded
-operational-history and session/request cleanup.
+cache, operational-history and session/request cleanup.
 
 Expired full-track, recording-identity, track-availability and album-discovery
 cache rows can be counted as candidates because normal reads enforce their
@@ -66,8 +148,9 @@ discovery page is fresh: removing that marker alone can change refresh behavior.
 Cache eviction would mean future misses/provider work; counts do not promise
 that all candidates should be removed immediately.
 
-Before any future implementation of deletion, use a fresh verified backup,
+Before implementing additional deletion policies, use a fresh verified backup,
 revalidate these preservation rules on the current schema, bound remote reads
 and writes, and verify stale-card decisions and catalogue integrity. Actual
-deletion and automatic pruning are outside this preview's scope. See
+deletion and automatic catalogue pruning are outside this preview's scope. The
+bounded application cache cleanup above is independent of the preview. See
 [backups and recovery](backups-and-recovery.md) for the existing safeguards.

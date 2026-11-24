@@ -1,4 +1,5 @@
 import { numericProgress, requestUsage, type RequestUsage } from "./rebuild-progress";
+import { storageControl } from "./capacity";
 
 export type DatabaseUsage = { queries: number; rowsRead: number; rowsWritten: number };
 
@@ -83,6 +84,8 @@ export async function observedInvocation<T>(env: Env, scope: string, generation:
     console.log(JSON.stringify({ event: "database_usage", scope, generation: generation || undefined,
       basis: "binding-response-meta", queries: totalQueries, rows_read: totalRead, rows_written: totalWritten,
       includesFinalMetricWrites: true }));
+    try { await storageControl(env).recordUsage(totalRead, totalWritten); }
+    catch { console.error(JSON.stringify({ event: "capacity_usage_not_saved", scope })); }
   }
 }
 

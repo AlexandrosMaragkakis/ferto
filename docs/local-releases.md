@@ -24,6 +24,17 @@ rebuilding/revalidating; the helper checks again after its drain.
 
 ## Update an existing instance
 
+The capacity-safeguard release adds the SQLite-backed `StorageControl` class and
+`STORAGE_CONTROL` binding. Copy the public template's `durable_objects` and
+`migrations` sections into an existing private instance configuration before
+packaging. This additive Durable Object class migration is applied by Wrangler
+as part of the verified deployment; it is separate from D1 SQL migrations and
+does not require `--migrate`. The namespace's budgets, pause state and pending
+save receipts survive code releases. Preserve its binding/class during recovery;
+do not delete the namespace to clear a capacity warning. See
+[Cloudflare's class migration reference](https://developers.cloudflare.com/durable-objects/reference/durable-objects-migrations/)
+and [capacity recovery](retention.md#capacity-protection-and-recovery).
+
 ```bash
 npm run deploy:local
 ```

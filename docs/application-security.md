@@ -42,8 +42,10 @@ The local Spotify authorization helper also bounds its token/profile requests.
 
 ## Application request budgets
 
-Production uses shared D1 counters rather than isolate-local memory. Client
-addresses are HMACed using the session secret; raw addresses are not stored.
+Production uses shared, durable counters in the SQLite-backed `StorageControl`
+object, independently of catalogue D1 storage. Client addresses are HMACed
+using the session secret; raw addresses are not stored. The object coordinates
+one configured Spotify owner/client and does no provider HTTP or catalogue work.
 
 | Route | Per client per minute | Whole instance per minute |
 | --- | --- | --- |
@@ -51,18 +53,41 @@ addresses are HMACed using the session secret; raw addresses are not stored.
 | Draw recommendation | 60 | 600 |
 
 Counters reset after sixty seconds; rejected requests return 429 and
-`Retry-After: 60`. One transaction checks the client allowance and grants global
-admission before updating the client counter. Throttled clients cannot spend
-everyone else's remaining allowance, and globally denied calls cannot create
-new client rows. Production requests without a client
+`Retry-After: 60`. A synchronous durable transaction checks the client allowance
+and grants global admission before updating the client counter. Throttled clients
+cannot spend everyone else's remaining allowance. Each budget stores at most
+its admitted clients and resets its map with the next window. Production requests without a client
 address share an unknown-client bucket. Local HTTP requests without
 Cloudflare's client-address header skip these network-client budgets.
 
 At most 32 unexpired OAuth transactions can exist, enforced in the insertion
 transaction. Expiry is indexed. Login and each scheduled tick remove up to 128
-expired states; scheduled ticks also remove up to 10,000 expired budget rows.
-Under the normal minute windows, admission limits create fewer budget rows
-than this cleanup allowance between quarter-hour ticks.
+expired states; scheduled ticks also remove up to 10,000 legacy expired D1 budget
+rows. New request counters do not grow D1. If durable request protection is
+unavailable, requests fail closed with a sanitized 503; no per-isolate or
+unlimited fallback bypasses the shared budgets.
+
+## Storage exhaustion and provider saves
+
+Storage errors are classified separately from daily row quotas and unrelated SQL
+errors. Only fixed messages/codes reach clients. The capacity pause survives
+worker eviction/deployment outside D1 and blocks manual, weekly and queued
+background expansion. Reads and bounded maintenance remain available where D1
+permits them; daily database quotas can also block reads.
+
+Before a Spotify library PUT, an owner-authorized save intent is persisted in
+the control object. A confirmed provider write receives a durable receipt before
+D1 bookkeeping. If bookkeeping fails, the API returns 202 with `ok:false`,
+`spotifySaved:true` and `pending:true`; the browser retains the card and history.
+Owner retries and bounded maintenance reconcile confirmed receipts without
+repeating Spotify writes. Unknown/timed-out saves are never automatically replayed.
+Unconfirmed intents expire after a day; confirmed receipts remain until reconciled.
+At most 32 pending saves are retained, with a two-minute per-save lease.
+
+Permanent Never decisions remain authoritative in D1 and are never reported as
+saved before their write succeeds. Public draws still check exclusions and skip
+confirmed pending saves; lazy pool repair failing for storage does not expose an
+excluded recording. See [capacity and recovery](retention.md#capacity-protection-and-recovery).
 
 These are modest controls for a personal instance, not a DDoS perimeter.
 Denied traffic still performs a counter query, shared networks share a client

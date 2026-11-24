@@ -6,6 +6,11 @@ import { refreshSpotifyAccessToken } from "./spotify";
 import { fetchWithDeadline } from "./request";
 import { jsonObject, RequestError, secureResponse } from "./http-security";
 import { cleanupRequestState, requestBudget } from "./request-budget";
+import { checkCapacity, recordStorageFailure, storageControl } from "./capacity";
+import { storageFailure, storageMessage } from "./storage-failure";
+import { resolveRecording, completeSave, reconcilePendingSaves } from "./owner-save";
+import { SAVE_LEASE_MS } from "./storage-control-state";
+export { StorageControl } from "./storage-control";
 
 const SESSION_TTL = 7 * DAY;
 const OAUTH_TTL = 10 * 60 * 1000;
@@ -69,6 +74,7 @@ function drawSlot(count: number, skippedSlot?: number): number {
 }
 
 async function recommendation(request: Request, env: Env): Promise<Response> {
+  const pending = new Set((await storageControl(env).saves()).filter(save => save.state === "confirmed").map(save => save.recordingKey));
   const requestedExclude = new URL(request.url).searchParams.get("exclude");
   // The visitor may only steer away from the representative currently shown;
   // recording keys and refresh internals never enter the request or response.
@@ -122,10 +128,12 @@ async function recommendation(request: Request, env: Env): Promise<Response> {
        WHERE s.generation = ? AND s.bucket_artist_id = ? AND s.track_slot = ?`,
     ).bind(live, bucket.bucket_artist_id, trackSlot).first<PoolRecordingRow>();
     if (!row) continue;
+    if (pending.has(row.recording_key)) continue;
     if (row.excluded) {
       // External Spotify changes discovered during a long bootstrap can make
       // a slot stale briefly. Compact it lazily and retry without a scan.
-      await removeFromRecommendationPool(env, live, row.recording_key);
+      try { await removeFromRecommendationPool(env, live, row.recording_key); }
+      catch (cause) { if (!await recordStorageFailure(env, cause)) throw cause; }
       continue;
     }
     return json({ recommendation: await toPublic(row), candidateCount: state.candidate_count }, 200, csrfHeader(request, env));
@@ -209,47 +217,13 @@ async function callback(request: Request, env: Env): Promise<Response> {
   return response;
 }
 
-type ResolvedRecording = {
-  recordingKey: string | null;
-  liveGeneration: string | null;
-  liveRecordingKey: string | null;
-  activeGeneration: string | null;
-  activeRecordingKey: string | null;
-};
-
-async function resolveRecording(env: Env, trackId: string): Promise<ResolvedRecording> {
-  // A card can remain open while a rebuild promotes a different representative
-  // of the same recording. Search retained history as well as current state and
-  // prefer an ISRC identity, while retaining exact live/staging aliases so a
-  // migrated spotify:<id> row disappears immediately after an ISRC upgrade.
-  const row = await env.DB.prepare(
-    `SELECT
-       (SELECT live_generation FROM refresh_state WHERE singleton = 1) AS live_generation,
-       (SELECT generation FROM rebuild_jobs WHERE singleton = 1 AND status = 'active') AS active_generation,
-       (SELECT r.recording_key FROM recordings r
-        WHERE r.spotify_id = ?
-        ORDER BY CASE WHEN r.recording_key LIKE 'isrc:%' THEN 0 ELSE 1 END,
-                 CASE WHEN r.generation = (SELECT live_generation FROM refresh_state WHERE singleton = 1) THEN 0 ELSE 1 END
-        LIMIT 1) AS recording_key,
-       (SELECT r.recording_key FROM recordings r
-        WHERE r.spotify_id = ?
-          AND r.generation = (SELECT live_generation FROM refresh_state WHERE singleton = 1)
-        LIMIT 1) AS live_recording_key,
-       (SELECT r.recording_key FROM recordings r
-        WHERE r.spotify_id = ?
-          AND r.generation = (SELECT generation FROM rebuild_jobs WHERE singleton = 1 AND status = 'active')
-        LIMIT 1) AS active_recording_key`,
-  ).bind(trackId, trackId, trackId).first<{ recording_key: string | null; live_generation: string | null; live_recording_key: string | null; active_generation: string | null; active_recording_key: string | null }>();
-  return {
-    recordingKey: row?.recording_key ?? null,
-    liveGeneration: row?.live_generation ?? null,
-    liveRecordingKey: row?.live_recording_key ?? null,
-    activeGeneration: row?.active_generation ?? null,
-    activeRecordingKey: row?.active_recording_key ?? null,
-  };
-}
-
 async function likeRecording(env: Env, trackId: string): Promise<Response | string | null> {
+  const control = storageControl(env);
+  let previous;
+  try { previous = (await control.saves()).find(save => save.trackId === trackId); }
+  catch { return error("Save recovery is temporarily unavailable. This song is retained; please try again shortly.", 503); }
+  if (previous?.state === "confirmed") return completeSave(env, trackId, previous.recordingKey, previous.operation);
+  if (previous && Date.now() - previous.updatedAt < SAVE_LEASE_MS) return json({ error: "A previous save is still awaiting confirmation. Please retry shortly; this song is retained.", code: "save_busy" }, 409);
   const resolved = await resolveRecording(env, trackId);
   let key = resolved.recordingKey;
   let accessToken: string;
@@ -284,34 +258,27 @@ async function likeRecording(env: Env, trackId: string): Promise<Response | stri
   // as a query parameter and works in both Development and Extended modes.
   const library = new URL("https://api.spotify.com/v1/me/library");
   library.searchParams.set("uris", `spotify:track:${trackId}`);
+  if (!key) return error("Recording identity could not be confirmed; song retained", 503);
+  let intent;
+  try { intent = await control.beginSave(trackId, key, randomToken()); }
+  catch { return error("Save recovery is temporarily unavailable. No Spotify save was sent; please try again shortly.", 503); }
+  if (intent.kind === "confirmed") return completeSave(env, trackId, intent.save.recordingKey, intent.save.operation);
+  if (intent.kind === "busy") return json({ error: "A previous save is still awaiting confirmation. Please retry shortly; this song is retained.", code: "save_busy" }, 409);
+  if (intent.kind === "full") return json({ error: "Pending saves need to finish before another song can be saved. Please try again later.", code: "pending_saves_full" }, 503);
   try {
     const saved = await fetchWithDeadline(library.toString(), { method: "PUT", headers: { Authorization: `Bearer ${accessToken}` } });
-    if (!saved.ok) return error("Spotify save could not be confirmed; candidate retained", 502);
+    if (!saved.ok) { await control.finishSave(trackId, intent.save.operation); return error("Spotify save could not be confirmed; candidate retained", 502); }
   } catch {
     // A timed-out PUT may have reached Spotify. Keep the card and let the
     // owner retry the idempotent save; never retry a write automatically.
     return error("Spotify save could not be confirmed; candidate retained", 502);
   }
-
-  if (!key) return null;
-  // Re-read destinations in one SQL snapshot after Spotify confirms the save.
-  // Across promotion this yields either old-live + active-staging, or the new
-  // live generation; it can never observe old-live + no active generation.
-  const destinations = await resolveRecording(env, trackId);
-  if (destinations.recordingKey?.startsWith("isrc:")) key = destinations.recordingKey;
-  const live = destinations.liveGeneration;
-  const active = destinations.activeGeneration;
-  const statements = [];
-  if (live) statements.push(env.DB.prepare("INSERT OR IGNORE INTO rebuild_known_recordings (generation, recording_key) VALUES (?, ?)").bind(live, key));
-  if (live && destinations.liveRecordingKey && destinations.liveRecordingKey !== key) statements.push(env.DB.prepare("INSERT OR IGNORE INTO rebuild_known_recordings (generation, recording_key) VALUES (?, ?)").bind(live, destinations.liveRecordingKey));
-  if (active && active !== live) statements.push(env.DB.prepare("INSERT OR IGNORE INTO rebuild_known_recordings (generation, recording_key) VALUES (?, ?)").bind(active, key));
-  if (active && active !== live && destinations.activeRecordingKey && destinations.activeRecordingKey !== key) statements.push(env.DB.prepare("INSERT OR IGNORE INTO rebuild_known_recordings (generation, recording_key) VALUES (?, ?)").bind(active, destinations.activeRecordingKey));
-  if (statements.length) await env.DB.batch(statements);
-  if (live) await removeFromRecommendationPool(env, live, destinations.liveRecordingKey ?? key);
-  // If promotion linearized after the destination snapshot, this generation is
-  // live now; compacting it also repairs counts before the owner request ends.
-  if (active && active !== live) await removeFromRecommendationPool(env, active, destinations.activeRecordingKey ?? key);
-  return key;
+  try { await control.confirmSave(trackId, intent.save.operation); }
+  catch {
+    return json({ ok: false, spotifySaved: true, pending: true,
+      error: "Saved to Spotify. FERTO could not confirm its local update. Keep this card and retry Add shortly to reconcile it safely." }, 202);
+  }
+  return completeSave(env, trackId, key, intent.save.operation);
 }
 
 async function neverRecording(env: Env, trackId: string): Promise<Response | string> {
@@ -406,6 +373,11 @@ const handler = {
       return error("not found", 404);
     } catch (cause) {
       if (cause instanceof RequestError) return error(cause.message, cause.status);
+      const kind = storageFailure(cause);
+      if (kind) {
+        try { await recordStorageFailure(env, cause); } catch { /* The response remains explicit even if coordination is unavailable. */ }
+        return json({ error: storageMessage(kind), code: kind }, 503, { "Retry-After": "60" });
+      }
       // Exceptions may contain provider bodies, SQL bindings or credentials.
       // Record the route and a fixed category rather than exception text.
       console.error(JSON.stringify({ event: "request_failed", path: url.pathname, reason: "unexpected_error" }));
@@ -425,8 +397,10 @@ export default {
   queue: (batch: MessageBatch<RefreshMessage>, env: Env) => observedInvocation(env, "refresh", batch.messages[0]?.body?.generation ?? "", (observed) => handler.queue(batch, observed)),
   scheduled: (controller: ScheduledController, env: Env, ctx: ExecutionContext) => {
     ctx.waitUntil(observedInvocation(env, "scheduler", "", async (observed) => {
-      await cleanupRequestState(observed);
+      try { await cleanupRequestState(observed); }
+      catch (cause) { if (!await recordStorageFailure(observed, cause)) throw cause; }
       await scheduledTick(observed, controller.scheduledTime, controller.cron);
+      await reconcilePendingSaves(observed);
     }));
   },
 } satisfies ExportedHandler<Env, RefreshMessage>;
