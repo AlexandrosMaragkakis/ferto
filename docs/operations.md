@@ -18,6 +18,17 @@ for resource settings, see [configuration](configuration.md).
   lease, pacing gate and retry deadline, it requeues the current generation
   and revision. It never starts idle/failed work or changes the Sunday schedule.
   This recovers a lost wake without waiting for the next weekly refresh.
+- **Expired-cache maintenance**: each 15-minute watchdog tick deletes at most
+  32 expired rows from each of the full-track, recording-identity,
+  track-availability and album-discovery caches. Cleanup also runs while work
+  is idle, failed or waiting on Spotify; starting a new refresh no longer
+  deletes these caches' entire expired backlog. Indexed expiry lookups bound
+  the reads, and the small batches leave room for index writes. Logs record
+  deletion counts and D1's actual row metadata. A cache-cleanup failure is
+  logged without preventing watchdog recovery. Catalogue generations, permanent
+  exclusions, active work and album-availability markers remain protected.
+  See [retention](retention.md) and the
+  [capacity safeguards roadmap](tasks/d1-capacity.md).
 - **Serialized queue**: the rebuild runs through a Cloudflare Queue consumer
   configured for one message, one batch, and one concurrency, plus a D1 lease,
   so exactly one rebuild generation progresses at a time. Work advances one

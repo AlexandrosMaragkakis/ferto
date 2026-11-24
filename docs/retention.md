@@ -1,8 +1,34 @@
 # Database retention analysis and preview
 
 FERTO retains public catalogue generations because owner actions resolve an
-old card's Spotify id through that history. This guide defines a conservative
-cleanup preview; it does not introduce deletion or scheduled pruning.
+old card's Spotify id through that history. The offline preview below identifies
+cleanup candidates without deleting data. The application separately performs
+the bounded expired-cache maintenance described here.
+
+## Application cache maintenance
+
+The existing 15-minute watchdog removes at most 32 expired rows per table from
+`spotify_track_cache`, `recording_identity_cache`, `track_availability` and
+`album_track_pages`. It uses each table's expiry index, keeps fresh entries and
+does not depend on starting or finishing a refresh. Each batch reevaluates expiry
+inside its DELETE statements, including after a concurrent cache refresh.
+
+The nominal 96 daily ticks can remove at most 12,288 rows across these tables;
+primary-key and expiry-index writes also count against D1 usage. Duplicate ticks
+can add work, and the allowance is shared with all databases and other app work.
+Structured `expired_cache_cleanup` logs include deletion counts and actual D1
+rows read/written. `expired_cache_cleanup_failed` records a failed batch without
+exception details or preventing the watchdog from recovering overdue work.
+
+This maintenance never prunes catalogue generations, exclusions, aliases, active
+jobs, playlist snapshots or album-availability markers. In particular, an expired
+availability marker still invalidates a fresh album-discovery page. The remaining
+cache tables keep their existing refresh-start cleanup policies.
+
+Removing expired rows can make pages reusable; the offline estimates below do
+not establish how much Cloudflare's reported physical storage will fall. The
+[capacity safeguards roadmap](tasks/d1-capacity.md) keeps actual release/storage
+verification and storage-exhaustion handling as separate completion gates.
 
 ## Inspect a verified backup
 
@@ -57,7 +83,7 @@ counts per generation/table; it does not execute any removal.
 Never decisions, their legacy identities/checks, schema history, playlist
 snapshots/pages and authentication/request state are always retained by this
 tool. Existing application maintenance remains responsible for its own bounded
-operational-history and session/request cleanup.
+cache, operational-history and session/request cleanup.
 
 Expired full-track, recording-identity, track-availability and album-discovery
 cache rows can be counted as candidates because normal reads enforce their
@@ -66,8 +92,9 @@ discovery page is fresh: removing that marker alone can change refresh behavior.
 Cache eviction would mean future misses/provider work; counts do not promise
 that all candidates should be removed immediately.
 
-Before any future implementation of deletion, use a fresh verified backup,
+Before implementing additional deletion policies, use a fresh verified backup,
 revalidate these preservation rules on the current schema, bound remote reads
 and writes, and verify stale-card decisions and catalogue integrity. Actual
-deletion and automatic pruning are outside this preview's scope. See
+deletion and automatic catalogue pruning are outside this preview's scope. The
+bounded application cache cleanup above is independent of the preview. See
 [backups and recovery](backups-and-recovery.md) for the existing safeguards.

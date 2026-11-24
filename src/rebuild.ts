@@ -3,6 +3,7 @@ import { randomToken } from "./security";
 import { refreshSpotifyAccessToken } from "./spotify";
 import { fetchWithDeadline } from "./request";
 import { readTrackCache, writeTrackCache } from "./track-cache";
+import { cleanupExpiredCaches } from "./cache-maintenance";
 import { invalidateServiceToken, readServiceToken, writeServiceToken, type ServiceToken } from "./service-token-cache";
 import { JOB_MUTATION_GUARD, jobMutationBindings, type JobMutationGuard } from "./rebuild-guard";
 import { progressStatement, countedRequest, requestEndpoint, saveRequestUsage, numericProgress, requestUsage, type RequestUsage, type RequestEndpoint } from "./rebuild-progress";
@@ -1567,12 +1568,10 @@ export async function startRebuild(env: Env): Promise<RefreshStatus> {
     claimed("DELETE FROM operational_activity WHERE hour < ?", timestamp - 30 * DAY_MS),
     claimed("DELETE FROM quota_interruptions WHERE occurred_at < ?", timestamp - 30 * DAY_MS),
     claimed("INSERT INTO refresh_history(generation,started_at,base_generation) SELECT ?,?,live_generation FROM refresh_state WHERE singleton=1", generation, timestamp),
-    claimed("DELETE FROM spotify_track_cache WHERE expires_at <= ?", timestamp),
-    claimed("DELETE FROM recording_identity_cache WHERE expires_at <= ?", timestamp),
-    claimed("DELETE FROM track_availability WHERE expires_at <= ?", timestamp),
+    // Large metadata/discovery caches drain in bounded watchdog batches, even
+    // while this job is active. Starting a refresh must not delete a backlog.
     claimed("DELETE FROM album_availability_pages WHERE expires_at <= ? AND NOT EXISTS (SELECT 1 FROM album_track_pages p WHERE p.context = album_availability_pages.context AND p.album_id = album_availability_pages.album_id AND p.cursor = album_availability_pages.cursor)", timestamp),
     claimed("DELETE FROM service_token_cache WHERE expires_at <= ?", timestamp),
-    claimed("DELETE FROM album_track_pages WHERE expires_at <= ?", timestamp),
     claimed("DELETE FROM playlist_snapshots WHERE completed_at <= ?", timestamp - PLAYLIST_CACHE_TTL_MS),
     claimed(`DELETE FROM playlist_snapshot_pages WHERE NOT EXISTS (SELECT 1 FROM playlist_snapshots s
       WHERE s.context = playlist_snapshot_pages.context AND s.spotify_id = playlist_snapshot_pages.spotify_id
@@ -1815,6 +1814,12 @@ export function nextWeeklyCronAt(from: number): number {
  */
 export async function scheduledTick(env: Env, scheduledTime: number, cron = CRON_EXPRESSION): Promise<void> {
   if (cron === WATCHDOG_CRON_EXPRESSION) {
+    try { await cleanupExpiredCaches(env); }
+    catch {
+      // Cache maintenance must not prevent recovery of a lost refresh wake.
+      // D1 exceptions may include SQL/bindings, so log only a fixed category.
+      console.error(JSON.stringify({ event: "expired_cache_cleanup_failed" }));
+    }
     // Maintenance is bounded even if a quota-blocked refresh lasts for months.
     const scheduled = new Date(scheduledTime);
     if (scheduled.getUTCHours() === 0 && scheduled.getUTCMinutes() === 0) {
