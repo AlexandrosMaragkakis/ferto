@@ -111,6 +111,15 @@ Before pausing the Queue, the job exports D1, restores/checks it locally and
 encrypts the SQL archive, manifest and instance settings with GnuPG. It uploads
 only `backup.gpg`, downloads the saved artifact and checks its exact hash/size.
 An upload/download/check failure stops before a new delivery pause or deployment.
+The backup round-trip uses GitHub CLI's REST-backed download for the exact run
+and attempt, with three 60-second attempts and 5/10-second backoff for delayed
+artifact visibility. Each attempt gets a fresh temporary directory. Ciphertext
+size/checksum mismatches or unexpected files stop immediately; retrying never
+accepts different bytes or bypasses the backup guard.
+Verify uses the same bounded download for its release-artifact round trip,
+followed by the existing clean-revision and complete-manifest checksum checks.
+Its GitHub token has read-only contents/actions access and no production secrets.
+The production job also uses this downloader when receiving the verified release.
 The deploy helper re-verifies SQL and checks that the backup matches the current
 instance, Worker and clean revision, with a maximum age of one hour.
 
