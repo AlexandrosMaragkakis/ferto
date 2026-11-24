@@ -187,11 +187,16 @@ for resource settings, see [configuration](configuration.md).
   (artists, releases, tracks, playlists, deduplication, and existing indexes),
   so no track-count threshold can guarantee that arbitrary libraries fit the
   daily write allowance. Free is the intended target for small personal
-  catalogues; inspect D1 usage after the first rebuild and use D1 Paid before a
-  large or repeated manual rebuild. A quota failure leaves the prior live shelf
-  available, including completed publications; once D1 accepts writes again,
-  starting a fresh rebuild replaces
-  the failed job. See [D1 pricing and limits](https://developers.cloudflare.com/d1/platform/pricing/).
+  catalogues; inspect actual account-wide usage rather than repeatedly starting
+  large manual rebuilds. Capacity safeguards persist a background-growth pause
+  before the observed daily allowance or storage headroom is consumed; documented
+  D1 quota/storage failures also pause growth while preserving the job and cursors.
+  Essential owner operations and existing-catalogue reads remain available where
+  their dependencies permit them. The watchdog resumes existing work after the
+  UTC-day reset or confirmed storage recovery, respecting the original Spotify
+  wait. A daily read cap can also block public browsing until its reset. See
+  [capacity protection and recovery](retention.md#capacity-protection-and-recovery)
+  and [D1 pricing and limits](https://developers.cloudflare.com/d1/platform/pricing/).
 - **Catalogue**: seeds come from the first credited artist of each liked song;
   their albums and singles are crawled (skipping vanished artists with a
   warning); strictly playable tracks are enriched with individual Spotify

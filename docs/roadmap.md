@@ -4,7 +4,8 @@ Resolved **11 November 2026**. All four checkpoints are complete; checked items
 record the delivered work and each checkpoint lists its completion gate.
 
 These followed the completed publication and CI/CD setup.
-Current work continues in the [D1 capacity safeguards roadmap](tasks/d1-capacity.md).
+The [D1 capacity safeguards roadmap](tasks/d1-capacity.md) is also complete,
+including verified production deployment and measured scheduled maintenance.
 Keep FERTO's single-owner model, public discovery, artwork-driven interface
 and official Spotify player. Work within the existing no-payment setup.
 
