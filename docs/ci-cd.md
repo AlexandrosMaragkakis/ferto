@@ -120,6 +120,10 @@ Verify uses the same bounded download for its release-artifact round trip,
 followed by the existing clean-revision and complete-manifest checksum checks.
 Its GitHub token has read-only contents/actions access and no production secrets.
 The production job also uses this downloader when receiving the verified release.
+Verify records the producer manifest's SHA-256 as a workflow output before upload.
+Both release downloads must match that independent checksum before the complete
+manifest/revision checks run; a downloaded manifest cannot replace its own trust
+anchor. Backup downloads retain their separately recorded ciphertext checksum.
 The deploy helper re-verifies SQL and checks that the backup matches the current
 instance, Worker and clean revision, with a maximum age of one hour.
 

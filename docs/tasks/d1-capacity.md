@@ -1,7 +1,6 @@
 # D1 capacity safeguards roadmap
 
-**Status:** Implementation complete on `feat/d1-capacity-safeguards`; release
-verification is in progress.
+**Status:** Complete. Implemented, verified and deployed on 24 November 2026.
 
 **Updated:** 24 November 2026. This replaces the initial discussion-only task.
 
@@ -24,7 +23,7 @@ The existing [retention preview](../retention.md),
 
 ## 1. Bound expired-cache maintenance
 
-**Status:** Implemented and verified locally; not deployed.
+**Status:** Implemented, verified and deployed.
 
 - [x] Clean expired full-track, recording-identity, track-availability and
   album-discovery cache rows on the existing 15-minute watchdog, independently
@@ -49,8 +48,8 @@ by thousands of fresh entries. Dependency audit and publication scans passed.
 A disposable restore of the latest verified backup drained the fixed-cutoff
 backlog with at most 32 deletions per table per tick; hashes of all 38 other
 tables stayed unchanged, integrity and foreign keys passed, and the input
-archive remained unchanged. Detailed evidence is private. These local checks
-do not establish production storage recovery or complete milestones 2–4.
+archive remained unchanged. Detailed evidence is private. These initial local
+checks were followed by the release verification in milestone 4.
 
 Album-availability markers, playlist snapshots and service-token cleanup keep
 their existing policies in this milestone. This does not introduce catalogue
@@ -58,7 +57,7 @@ pruning or promise a particular reduction in Cloudflare's physical size.
 
 ## 2. Handle storage failures safely
 
-**Status:** Implemented and verified locally; awaiting production release.
+**Status:** Implemented, verified and deployed.
 
 - [x] Distinguish documented storage-exhaustion errors from daily row quotas,
   transient failures and unrelated SQL errors. Return useful sanitized messages.
@@ -94,7 +93,7 @@ polling, partial Add retries and failed Never without losing the card.
 
 ## 3. Warn and pause growth before exhaustion
 
-**Status:** Implemented and verified locally; awaiting production release.
+**Status:** Implemented, verified and deployed.
 
 - [x] Measure capacity using supported D1 metadata with bounded overhead.
   Include index writes in the maintenance budget and account-wide daily usage.
@@ -127,24 +126,67 @@ the DO's own Free-plan allowances remain separate. See the
 
 ## 4. Verify release behavior and actual storage recovery
 
-**Status:** Full verification and guarded production release in progress.
+**Status:** Complete. Production release and scheduled maintenance verified.
 
 - [x] Run full verification, secret checks and dependency audit for each release.
-- [ ] Use a verified pre-release backup and the existing deployment safeguards.
-- [ ] Compare Cloudflare's real storage and daily read/write metrics before and
+- [x] Use a verified pre-release backup and the existing deployment safeguards.
+- [x] Compare Cloudflare's real storage and daily read/write metrics before and
   after bounded maintenance; distinguish reusable pages from physical reclaim.
-- [ ] Confirm public browsing, owner actions, queue delivery and refresh progress
-  after release. Retain recovery evidence privately.
+- [x] Confirm public browsing, owner-action authorization, queue delivery and
+  retained refresh state after release. Verify positive owner-save/failure paths
+  on real Worker/D1/DO bindings with synthetic Spotify responses; avoid test
+  mutations to the production library. Retain recovery evidence privately.
 
 **Done when:** release evidence confirms the intended behavior and measured
 costs. Further retention changes require evidence that these safeguards are
 insufficient; permanent data and stale-card identities remain protected.
 
-**Pre-release validation:** 564 checks pass, including 382 Worker/integration,
-36 simulator and all 64 desktop/mobile browser checks; one installer privilege
-check runs only in CI. TypeScript, production build and Wrangler dry-run pass.
+**Release validation:** all 572 CI checks pass, including 382 Worker/integration,
+36 simulator, 67 operations and all 64 desktop/mobile browser checks. The
+installer privilege check also passes in CI. TypeScript, production build and
+Wrangler dry-run pass.
 Dependency audit reports zero vulnerabilities and the publication scan passes.
 The additive Durable Object binding/class migration is included in the release;
 no D1 SQL migration or billing change is required. Production CI/CD performs a
 fresh verified encrypted backup, pauses/drains delivery, verifies deployment and
-resumes the queue. Live results will be recorded after that release completes.
+resumes the queue.
+
+The capacity implementation merged in [PR #17](https://github.com/AlexandrosMaragkakis/ferto/pull/17).
+Release verification exposed delayed visibility of newly uploaded GitHub
+artifacts. [PR #18](https://github.com/AlexandrosMaragkakis/ferto/pull/18) adds
+bounded REST-backed downloads for all artifact handoffs, retaining exact backup
+ciphertext and complete release-manifest checks. The initial attempts stopped
+before live changes. Seven regressions cover that handoff and integrity behavior.
+
+[Production release 800eef86c352](https://github.com/AlexandrosMaragkakis/ferto/actions/runs/45380877656)
+completed the verified backup, full 16-minute drain, additive DO class migration,
+deployment, smoke checks and confirmed queue resumption. Its encrypted backup
+was also downloaded, decrypted and restore-verified locally; encrypted operational
+evidence and the matching release receipt are retained privately.
+
+Independent live verification matches all 18 deployed asset hashes and passes
+27 asset/API/security checks, including anonymous authorization and CSRF probes.
+Desktop/mobile browsing, cached Back, theme persistence and narrow layout pass
+with no JavaScript errors. Observed public draws write zero D1 rows while the
+durable budget remains active. The queue consumer processed a delivery and
+preserved the existing provider wait; source advancement correctly waits for
+that deadline. Positive and partial owner-save paths were tested locally, using
+synthetic provider responses. Verification makes no production Spotify writes.
+
+The observed scheduled maintenance batch removed exactly 32 expired rows from
+each of the four caches (128 total), reporting 512 D1 rows read and 128 written.
+The complete scheduled invocation reported 517 reads and 128 writes, with no
+exceptions. Both Cron schedules are registered; the first observed batch arrived
+on the next quarter-hour after the initial post-deploy slot. The cache cap held
+while the existing refresh remained quota-waiting.
+
+Cloudflare storage and account-wide UTC-day usage were checked before deployment,
+after deployment and after maintenance, with healthy headroom. Removing expired
+rows makes pages reusable; a single bounded batch does not establish full-backlog
+physical reclamation. Exact production metrics and raw logs remain private.
+
+The closing CI/documentation change preserves an independent producer-manifest
+checksum for both release downloads, with two additional rejection regressions.
+Its Worker, frontend, bindings, dependency lockfile and D1 migrations match the
+deployed `800eef86c352` runtime; closing the evidence does not require another
+runtime rollout.

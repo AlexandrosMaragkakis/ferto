@@ -6,7 +6,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { downloadSavedBackup } from "./download-ci-backup.mjs";
-import { downloadCiArtifact } from "./download-ci-artifact.mjs";
+import { downloadCiArtifact, downloadCiRelease } from "./download-ci-artifact.mjs";
 
 async function fixture(check) {
   const root = await mkdtemp(join(tmpdir(), "ferto-backup-handoff-"));
@@ -65,7 +65,7 @@ test("an existing round-trip directory is retained and never overwritten", () =>
 }));
 
 test("release artifact downloads retain the complete bundle for subsequent manifest validation", () => fixture(async ({ root, options }) => {
-  await downloadCiArtifact({ ...options, name: "verified-release", destination: ".release", execute: async (_command, args) => {
+  await downloadCiRelease({ ...options, manifestSha256: createHash("sha256").update("fixture-manifest").digest("hex"), execute: async (_command, args) => {
     assert.equal(args[6], "verified-release");
     await mkdir(join(args.at(-1), "worker"));
     await writeFile(join(args.at(-1), "worker/worker.js"), "fixture-worker");
@@ -80,5 +80,20 @@ test("unsupported artifact names and output paths cannot start downloads or publ
   for (const change of [{ name: "../outside" }, { destination: "../outside" }]) {
     await assert.rejects(downloadCiArtifact({ ...options, name: "verified-release", destination: ".release", ...change,
       execute: async () => assert.fail("Provider must not be contacted") }), /supported destination/);
+  }
+}));
+
+test("an altered downloaded manifest cannot replace the producer's checksum anchor", () => fixture(async ({ root, options }) => {
+  let calls = 0;
+  await assert.rejects(downloadCiRelease({ ...options, manifestSha256: "a".repeat(64), execute: async (_command, args) => {
+    calls++; await writeFile(join(args.at(-1), "manifest.json"), "changed-manifest");
+  } }), /differs from the producer/);
+  assert.equal(calls, 1); await assert.rejects(readFile(join(root, ".release/manifest.json")), { code: "ENOENT" });
+  assert.deepEqual(await readdir(join(root, ".local/ci-download")), []);
+}));
+
+test("missing or malformed producer checksums fail before contacting GitHub", () => fixture(async ({ options }) => {
+  for (const manifestSha256 of ["", "unknown", "a".repeat(63)]) {
+    await assert.rejects(downloadCiRelease({ ...options, manifestSha256, execute: async () => assert.fail("Provider must not be contacted") }), /producer's manifest checksum/);
   }
 }));
