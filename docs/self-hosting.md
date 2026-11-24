@@ -300,7 +300,9 @@ After deployment, an owner refresh or the weekly tick resumes a quota-failed
 or exhausted 5xx/network job left by the previous version without deleting its
 staging or work queues; permanent failures still start a fresh generation.
 The cache retains the requested id through market relinking and never extends expiry on a hit.
-Expired entries are removed when a fresh rebuild starts.
+Expired track entries are now drained by bounded quarter-hour maintenance,
+including while a rebuild remains active or quota-waiting. See
+[cache maintenance and capacity recovery](retention.md).
 
 `0017_incremental_discovery.sql` adds encrypted service-token reuse, exact-id
 known-track mappings, versioned playlist exclusions, cached album discovery
