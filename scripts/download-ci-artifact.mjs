@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { chmod, lstat, mkdtemp, rename, rm } from "node:fs/promises";
+import { appendFile, chmod, lstat, mkdtemp, rename, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ignoredOutput, projectRoot } from "./operations-lib.mjs";
+import { hashFile } from "./backup.mjs";
 
 const exec = promisify(execFile);
 const download = (command, args) => exec(command, args, { timeout: 60_000, killSignal: "SIGKILL", maxBuffer: 1024 * 1024,
@@ -36,8 +37,25 @@ export async function downloadCiArtifact({ root = projectRoot, repository = proc
   }
 }
 
+/** Pin the manifest to the producer's workflow output, independently of the
+ * downloaded archive. Complete file/revision validation still follows. */
+export async function downloadCiRelease({ manifestSha256 = process.env.FERTO_ARTIFACT_MANIFEST_SHA256, ...options } = {}) {
+  if (!/^[a-f0-9]{64}$/.test(manifestSha256 || "")) throw new Error("Release download needs the producer's manifest checksum");
+  return downloadCiArtifact({ ...options, name: "verified-release", destination: ".release", validate: async stage => {
+    if (await hashFile(join(stage, "manifest.json")) !== manifestSha256) throw new Error("Downloaded release manifest differs from the producer's checksum");
+  } });
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   process.umask(0o077);
-  try { await downloadCiArtifact({ name: "verified-release", destination: ".release" }); console.log("Release artifact downloaded; revision/checksum validation must pass next."); }
+  try {
+    if (process.argv[2] === "--record-manifest" && process.env.GITHUB_OUTPUT) {
+      const digest = await hashFile(join(projectRoot, ".release/manifest.json"));
+      await appendFile(process.env.GITHUB_OUTPUT, `sha256=${digest}\n`);
+      console.log("Recorded the verified producer manifest checksum.");
+    } else if (process.argv.length === 2) {
+      await downloadCiRelease(); console.log("Release artifact downloaded with matching producer manifest; complete revision/file validation must pass next.");
+    } else throw new Error("Use --record-manifest with GITHUB_OUTPUT, or download the producer-anchored release");
+  }
   catch (error) { console.error(error.message); process.exitCode = 1; }
 }
