@@ -6,12 +6,13 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { downloadSavedBackup } from "./download-ci-backup.mjs";
+import { downloadCiArtifact } from "./download-ci-artifact.mjs";
 
 async function fixture(check) {
   const root = await mkdtemp(join(tmpdir(), "ferto-backup-handoff-"));
   try {
     execFileSync("git", ["init", "-q", root]);
-    await writeFile(join(root, ".gitignore"), "/.local/\n");
+    await writeFile(join(root, ".gitignore"), "/.local/\n/.release/\n");
     await mkdir(join(root, ".local/ci"), { recursive: true });
     const body = "ciphertext-fixture";
     await writeFile(join(root, ".local/ci/backup.json"), JSON.stringify({ directory: "/verified-export", bytes: Buffer.byteLength(body), sha256: createHash("sha256").update(body).digest("hex") }));
@@ -61,4 +62,23 @@ test("an existing round-trip directory is retained and never overwritten", () =>
   await mkdir(join(root, ".local/ci-roundtrip")); await writeFile(join(root, ".local/ci-roundtrip/backup.gpg"), "existing");
   await assert.rejects(downloadSavedBackup({ ...options, execute: async () => assert.fail("Provider must not be contacted") }), /already exists/);
   assert.equal(await readFile(join(root, ".local/ci-roundtrip/backup.gpg"), "utf8"), "existing");
+}));
+
+test("release artifact downloads retain the complete bundle for subsequent manifest validation", () => fixture(async ({ root, options }) => {
+  await downloadCiArtifact({ ...options, name: "verified-release", destination: ".release", execute: async (_command, args) => {
+    assert.equal(args[6], "verified-release");
+    await mkdir(join(args.at(-1), "worker"));
+    await writeFile(join(args.at(-1), "worker/worker.js"), "fixture-worker");
+    await writeFile(join(args.at(-1), "manifest.json"), "fixture-manifest");
+  } });
+  assert.equal(await readFile(join(root, ".release/worker/worker.js"), "utf8"), "fixture-worker");
+  assert.equal(await readFile(join(root, ".release/manifest.json"), "utf8"), "fixture-manifest");
+  assert.deepEqual(await readdir(join(root, ".local/ci-download")), []);
+}));
+
+test("unsupported artifact names and output paths cannot start downloads or publish outside their destinations", () => fixture(async ({ options }) => {
+  for (const change of [{ name: "../outside" }, { destination: "../outside" }]) {
+    await assert.rejects(downloadCiArtifact({ ...options, name: "verified-release", destination: ".release", ...change,
+      execute: async () => assert.fail("Provider must not be contacted") }), /supported destination/);
+  }
 }));

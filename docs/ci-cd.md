@@ -116,6 +116,10 @@ and attempt, with three 60-second attempts and 5/10-second backoff for delayed
 artifact visibility. Each attempt gets a fresh temporary directory. Ciphertext
 size/checksum mismatches or unexpected files stop immediately; retrying never
 accepts different bytes or bypasses the backup guard.
+Verify uses the same bounded download for its release-artifact round trip,
+followed by the existing clean-revision and complete-manifest checksum checks.
+Its GitHub token has read-only contents/actions access and no production secrets.
+The production job also uses this downloader when receiving the verified release.
 The deploy helper re-verifies SQL and checks that the backup matches the current
 instance, Worker and clean revision, with a maximum age of one hour.
 
