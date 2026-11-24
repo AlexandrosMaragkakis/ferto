@@ -2398,7 +2398,9 @@ describe("v4 rebuild state machine", () => {
       await tick(testEnv, Date.now(), state === "unknown-cron" ? "* * * * *" : WATCHDOG_CRON_EXPRESSION);
       expect(send).not.toHaveBeenCalled();
       expect(fetch).not.toHaveBeenCalled();
-      expect(await statusSnapshot(env)).toEqual(before);
+      const { capacity: _oldCapacity, databaseUsage: _oldUsage, ...beforeRefresh } = before;
+      const { capacity: _newCapacity, databaseUsage: _newUsage, ...afterRefresh } = await statusSnapshot(env);
+      expect(afterRefresh).toEqual(beforeRefresh);
     });
 
     it.each(["recent", "lease", "retry", "pacing"])("preserves the %s gate", async (gate) => {

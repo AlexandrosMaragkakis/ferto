@@ -200,6 +200,11 @@ with at least two albums and eight tracks per album. See
 - The SQLite adapter supports the D1 methods the app currently uses. Unsupported
   methods fail explicitly. It enforces 100 bound parameters and the configured
   statement budget; HTTP requests have a separate configured invocation budget.
+- Storage control uses the production synchronous state machine with an isolated
+  in-memory adapter. The Node bundle shims the `cloudflare:workers` base class;
+  it never instantiates a Durable Object. Persistence across eviction, RPC
+  failures and real D1 capacity-failure behavior are covered by the Cloudflare
+  integration tests, rather than modeled by this adapter.
 - `rowsReturned` and `rowsChanged` describe local SQLite statement results.
   **They are not D1 scanned, indexed or billable row counts.** Cloudflare CPU,
   storage quotas, network latency, read replication and parallel consumer races

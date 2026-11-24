@@ -50,7 +50,8 @@ Cloudflare deployment work from the same checkout.
 - [Local releases](docs/local-releases.md): verified updates, deployment failure handling and operational status.
 - [GitHub CI/CD](docs/ci-cd.md): checks, optional deployment from `main`, encrypted backups and one-time setup.
 
-The stack is a Vite frontend and a Cloudflare Worker with D1 and Queues, using
+The stack is a Vite frontend and a Cloudflare Worker with D1, Queues and a
+SQLite-backed Durable Object for request protection and storage recovery, using
 the Spotify Web API and official Embed. An owner's Spotify app needs to meet
 Spotify's current [Development Mode requirements](https://developer.spotify.com/documentation/web-api/concepts/quota-modes).
 
@@ -65,6 +66,7 @@ flowchart TD
   spotify["Spotify APIs<br/>Web API and account authorization"]
   db[("Cloudflare D1<br/>catalogue, jobs, caches and history")]
   queue["Cloudflare Queues"]
+  control["SQLite Durable Object<br/>request budgets, capacity and pending saves"]
   cron["Cron triggers<br/>weekly refresh and watchdog"]
 
   subgraph worker["One Cloudflare Worker"]
@@ -76,10 +78,12 @@ flowchart TD
   ui -->|playback| embed
   http -->|recommendations and owner state| db
   http -->|sign-in and owner actions| spotify
+  http -->|admission and save receipts| control
   http -->|starts refreshes and applies exclusions| refresh
   cron -->|scheduled handler| refresh
   refresh -->|catalogue reads| spotify
   refresh -->|catalogue, progress and caches| db
+  refresh -->|capacity pause and usage| control
   refresh -.->|enqueues work| queue
   queue -.->|same Worker's queue handler| refresh
 ```

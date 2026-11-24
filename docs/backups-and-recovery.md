@@ -205,3 +205,10 @@ clear restored cached authentication state as part of the incident response.
 Restoring old data alone does not revoke credentials. The remote destructive
 restore/import procedures are documented, not exercised against the live app;
 the completed automated rehearsal is an actual local restore of the exported data.
+
+The D1 SQL archive does not include `StorageControl` Durable Object counters,
+capacity state or pending Spotify-save receipts. Preserve the existing Worker
+name, class and namespace during code or D1 recovery so those receipts survive.
+Permanent Never decisions and catalogue identities remain in D1. See
+[capacity recovery](retention.md) before replacing a namespace or reconciling a
+pending save; an unknown Spotify outcome must not be replayed automatically.

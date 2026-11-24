@@ -10,6 +10,7 @@ import { seededRandom, simulationConfig, type SimulationConfig } from "./config"
 import { SimulationDatabase, type DatabaseMetrics } from "./database";
 import { SimulationQueue, type QueueMetricsReport } from "./queue";
 import { SyntheticSpotify, type ApiEndpointMetrics, type ApiMetrics } from "./spotify";
+import { simulatedStorageControl } from "./storage-control";
 
 type Job = { generation: string; status: string; phase: RefreshPhase; revision: number; lease_until: number | null; retry_at: number | null; next_read_at: number; progress_json: string; request_counts_json: string };
 export type TraceEvent = { event: "delivery" | "cron" | "watchdog" | "crash"; at: string; run: number; phase: string; revision: number; statements: number; requests: number; backlog: number; crashed: boolean };
@@ -54,6 +55,7 @@ export async function runSimulation(input: Partial<SimulationConfig>, options: S
   const runs: RunReport[] = [];
   const generations: string[] = [];
   const environment: Env = {
+    STORAGE_CONTROL: simulatedStorageControl(),
     DB: database.binding, REFRESH_QUEUE: queue.binding,
     ASSETS: { fetch: async () => new Response("Assets are outside the refresh simulator", { status: 404 }),
       connect: () => { throw new Error("Simulator blocks asset TCP connections"); } },

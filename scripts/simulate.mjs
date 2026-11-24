@@ -15,6 +15,7 @@ if (Number(process.versions.node.split(".")[0]) < 24) {
     // Explicit configFile:false and envDir:false keep the app's Wrangler plugin,
     // local credentials, production bindings and output directory uninvolved.
     await build({ configFile: false, envDir: false, root, logLevel: "error",
+      resolve: { alias: { "cloudflare:workers": resolve(root, "simulation/cloudflare-workers.ts") } },
       build: { ssr: resolve(root, "simulation", selfTest ? "simulator.test.ts" : "cli.ts"), outDir: folder,
         emptyOutDir: true, rollupOptions: { output: { entryFileNames: "runner.mjs" } } } });
     const entry = await import(pathToFileURL(join(folder, "runner.mjs")).href);

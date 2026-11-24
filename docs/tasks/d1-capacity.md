@@ -1,6 +1,7 @@
 # D1 capacity safeguards roadmap
 
-**Status:** Implementation started on `feat/d1-capacity-safeguards`.
+**Status:** Implementation complete on `feat/d1-capacity-safeguards`; release
+verification is in progress.
 
 **Updated:** 24 November 2026. This replaces the initial discussion-only task.
 
@@ -57,44 +58,78 @@ pruning or promise a particular reduction in Cloudflare's physical size.
 
 ## 2. Handle storage failures safely
 
-**Status:** Planned; not implemented by milestone 1.
+**Status:** Implemented and verified locally; awaiting production release.
 
-- [ ] Distinguish documented storage-exhaustion errors from daily row quotas,
+- [x] Distinguish documented storage-exhaustion errors from daily row quotas,
   transient failures and unrelated SQL errors. Return useful sanitized messages.
-- [ ] Address public discovery's dependency on writable request-budget rows
+- [x] Address public discovery's dependency on writable request-budget rows
   while retaining shared rate-limit and abuse protection.
-- [ ] Handle Spotify-confirmed Add operations whose local bookkeeping fails,
+- [x] Handle Spotify-confirmed Add operations whose local bookkeeping fails,
   with an explicit partial outcome and a safe recovery/reconciliation path.
   Preserve the displayed card and authoritative Never decisions on failures.
-- [ ] Give refresh deliveries capacity-specific recovery behavior, preserving
+- [x] Give refresh deliveries capacity-specific recovery behavior, preserving
   generation/cursor state and preventing an uncontrolled retry loop.
-- [ ] Turn the investigation's synthetic failure probes into regression tests,
+- [x] Turn the investigation's synthetic failure probes into regression tests,
   including public draws, Add, Never, scheduled work and queue redelivery.
 
 **Done when:** storage errors have tested user-visible outcomes, no owner action
 is falsely reported as saved, and browsing protection and recovery remain sound.
 
+Strict shared request counters and pending save receipts now live in a small
+SQLite-backed `StorageControl` Durable Object, independently of catalogue D1.
+The existing per-client/global limits remain enforced. Admission fails closed
+if that object is unavailable. An Add persists an intent before contacting
+Spotify; a confirmed provider save followed by failed local bookkeeping returns
+an explicit HTTP 202 partial result and retains the card. Confirmed receipts
+reconcile without another Spotify mutation. Unknown provider outcomes require
+an explicit owner retry. Never remains authoritative only after D1 succeeds.
+Capacity-failed queue deliveries acknowledge and retain their job/cursors;
+the existing watchdog resumes them after recovery instead of spending retries.
+
+**Validation:** 22 storage-control/failure regression cases pass, including real
+D1/DO integration, eviction persistence, strict budgets with rejected D1 writes,
+partial/unknown saves, unavailable coordination, duplicate deliveries and a real
+recovery write probe. Desktop/mobile browser checks cover warnings, paused
+polling, partial Add retries and failed Never without losing the card.
+
 ## 3. Warn and pause growth before exhaustion
 
-**Status:** Planned; thresholds and persistence design remain to be selected.
+**Status:** Implemented and verified locally; awaiting production release.
 
-- [ ] Measure capacity using supported D1 metadata with bounded overhead.
+- [x] Measure capacity using supported D1 metadata with bounded overhead.
   Include index writes in the maintenance budget and account-wide daily usage.
-- [ ] Select warning/pause/resume thresholds from measured growth and essential
+- [x] Select warning/pause/resume thresholds from measured growth and essential
   write needs, with hysteresis and sufficient operating headroom.
-- [ ] Show the owner a clear capacity warning and a persistent background-growth
+- [x] Show the owner a clear capacity warning and a persistent background-growth
   pause. Weekly/manual wakes must respect the pause until recovery is confirmed.
-- [ ] Test threshold crossings, stale measurements, restarts, duplicate queue
+- [x] Test threshold crossings, stale measurements, restarts, duplicate queue
   deliveries, essential owner operations and safe resumption.
 
 **Done when:** background expansion stops before consuming essential headroom
 and the owner can understand the state and recover safely.
 
+The owner sees a warning at 375 MB (75%). Background growth pauses at 400 MB
+(80%), leaving 100 MB of storage headroom; a storage pause resumes at or below
+350 MB (70%) only after a bounded D1 write probe succeeds. Supported `size_after`
+metadata comes from one constant query, cached for five minutes and forced
+after quarter-hour maintenance. Measurements and pauses survive Worker/DO
+restarts; older measurements cannot replace newer ones. Manual and weekly wakes
+respect the pause, while essential owner operations and bounded cleanup remain
+available when their dependencies permit them.
+
+The DO also pauses background work at 3.5 million observed D1 reads or 70,000
+observed writes per UTC day. These are this Worker's measurements, including
+index costs reported by D1, not account-wide counters. Actual documented daily
+quota failures persist a pause until the next UTC day. Account-wide GraphQL
+usage is checked separately through `ops:status`; other apps, CLI commands and
+the DO's own Free-plan allowances remain separate. See the
+[capacity and recovery procedure](../retention.md) for limits and recovery.
+
 ## 4. Verify release behavior and actual storage recovery
 
-**Status:** Pending a reviewed release; implementation does not deploy itself.
+**Status:** Full verification and guarded production release in progress.
 
-- [ ] Run full verification, secret checks and dependency audit for each release.
+- [x] Run full verification, secret checks and dependency audit for each release.
 - [ ] Use a verified pre-release backup and the existing deployment safeguards.
 - [ ] Compare Cloudflare's real storage and daily read/write metrics before and
   after bounded maintenance; distinguish reusable pages from physical reclaim.
@@ -104,3 +139,12 @@ and the owner can understand the state and recover safely.
 **Done when:** release evidence confirms the intended behavior and measured
 costs. Further retention changes require evidence that these safeguards are
 insufficient; permanent data and stale-card identities remain protected.
+
+**Pre-release validation:** 564 checks pass, including 382 Worker/integration,
+36 simulator and all 64 desktop/mobile browser checks; one installer privilege
+check runs only in CI. TypeScript, production build and Wrangler dry-run pass.
+Dependency audit reports zero vulnerabilities and the publication scan passes.
+The additive Durable Object binding/class migration is included in the release;
+no D1 SQL migration or billing change is required. Production CI/CD performs a
+fresh verified encrypted backup, pauses/drains delivery, verifies deployment and
+resumes the queue. Live results will be recorded after that release completes.

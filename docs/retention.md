@@ -30,6 +30,62 @@ not establish how much Cloudflare's reported physical storage will fall. The
 [capacity safeguards roadmap](tasks/d1-capacity.md) keeps actual release/storage
 verification and storage-exhaustion handling as separate completion gates.
 
+## Capacity protection and recovery
+
+The SQLite-backed `STORAGE_CONTROL` Durable Object keeps request budgets,
+capacity/usage state and pending Spotify saves outside catalogue D1. It is
+available on the [Workers Free plan](https://developers.cloudflare.com/durable-objects/platform/pricing/).
+The namespace coordinates one configured Spotify client/owner and does no
+provider requests. Its own Free allowances still apply; failure never disables
+request protection or silently enables unrestricted browsing.
+
+Capacity uses D1's supported [`meta.size_after`](https://developers.cloudflare.com/d1/worker-api/return-object/)
+from one constant-size query, at most every five minutes during refresh work
+and explicitly after each 15-minute cleanup. The current Free assumptions are:
+
+| State | Threshold | Behavior |
+| --- | --- | --- |
+| Warning | 375 MB (75% of 500 MB) | Owner status shows measured storage |
+| Pause background growth | 400 MB (80%) | Preserve 100 MB of headroom; manual/weekly/queued wakes respect the pause |
+| Resume after storage pressure | At or below 350 MB (70%) | A bounded insert/delete probe must also confirm writes are available after a storage error |
+
+These conservative thresholds leave substantially more headroom than a normal
+bounded refresh unit and use hysteresis to avoid repeated pause/resume cycles.
+Stale observations cannot overwrite newer ones. Missing measurements or an
+unavailable control object stop new background work until a later check succeeds.
+An actual storage error persists a pause even if the last size observation was low.
+
+The Worker also accumulates its observed D1 row metadata outside D1 and pauses
+background growth at 3.5 million reads or 70,000 writes in a UTC day. These are
+**this Worker's observed totals**, not remaining account allowance: interrupted
+calls and dashboard/CLI/other-database activity can be absent. Use `npm run
+ops:status` for account-wide GraphQL totals. Actual daily-quota errors hold the
+pause until the next UTC day. The owner status distinguishes storage and daily
+allowance pauses; it polls a paused state once a minute while the watchdog checks
+for recovery every 15 minutes. Background work never bypasses a Spotify deadline.
+
+Public discovery's shared rate limits no longer write D1. Owner operations keep
+their authentication, Origin and CSRF protections. A failed exclusion retains
+the card and shows an explicit error. A Spotify-confirmed Add with failed local
+bookkeeping returns a partial outcome; the card/history stay available for retry.
+Up to four confirmed saves per maintenance tick are reconciled using D1 only,
+without a repeated Spotify mutation. Confirmed receipts are retained until that
+idempotent bookkeeping succeeds; unconfirmed attempts are not replayed.
+
+After a capacity warning/pause, inspect the owner panel, `npm run ops:status`
+and the structured maintenance logs. Allow bounded expiry cleanup to run and
+verify real Cloudflare size/usage rather than assuming the offline estimate is
+reclaimed space. Recovery checks resume the same saved generation/cursor. If
+capacity remains insufficient, retain backups and review an explicit retention
+or capacity change; no automatic paid upgrade or catalogue deletion occurs.
+
+The control namespace is durable across releases and must not be deleted or
+renamed to clear a pause. D1 SQL backups do not contain its counters or pending
+receipts. Preserve its binding and class migration during recovery. Spotify is
+the external authority for confirmed library saves; after restoring an older D1
+snapshot, retry/reconcile retained receipts and refresh known tracks as needed.
+Permanent exclusions and catalogue identities remain in the D1 backup.
+
 ## Inspect a verified backup
 
 ```bash

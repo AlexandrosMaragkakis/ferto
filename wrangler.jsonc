@@ -48,5 +48,21 @@
 		"SPOTIFY_CLIENT_ID": "REPLACE_WITH_SPOTIFY_CLIENT_ID",
 		"OWNER_SPOTIFY_ID": "REPLACE_WITH_OWNER_SPOTIFY_ID",
 		"APP_ORIGIN": "http://127.0.0.1:8787"
-	}
+	},
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "STORAGE_CONTROL",
+				"class_name": "StorageControl"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "storage-control-v1",
+			"new_sqlite_classes": [
+				"StorageControl"
+			]
+		}
+	]
 }

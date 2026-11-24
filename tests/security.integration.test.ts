@@ -6,6 +6,8 @@ import { hmacSha256 } from "../src/security";
 import { cleanupRequestState } from "../src/request-budget";
 import { fetchWithDeadline } from "../src/request";
 import { HTML_CSP, PERMISSIONS_POLICY, jsonObject } from "../src/http-security";
+import { runInDurableObject } from "cloudflare:test";
+import { storageControl } from "../src/capacity";
 import staticHeaders from "../web/public/_headers?raw";
 
 const origin = env.APP_ORIGIN;
@@ -106,17 +108,20 @@ describe("publication security regressions", () => {
     const response = await worker.fetch(post("/api/owner/login", undefined, "{}", { "CF-Connecting-IP": "192.0.2.17" }), env);
     expect(response.status).toBe(429); expect(response.headers.get("Retry-After")).toBe("60");
     expect(await count("oauth_states")).toBe(5);
-    const keys = await env.DB.prepare("SELECT budget_key FROM request_budgets").all();
-    expect(JSON.stringify(keys)).not.toContain("192.0.2.17");
-    expect(await env.DB.prepare("SELECT requests FROM request_budgets WHERE budget_key = 'login:global'").first()).toEqual({ requests: 5 });
+    const budget = await runInDurableObject(storageControl(env), (_instance, state) => state.storage.kv.get<{ total: number; clients: Record<string, number> }>("budget:login"));
+    expect(JSON.stringify(budget)).not.toContain("192.0.2.17");
+    expect(budget?.total).toBe(5);
   });
 
   it("throttles public draws and permits them again after the budget expires", async () => {
     const draw = () => worker.fetch(new Request(`${origin}/api/recommendation`, { headers: { "CF-Connecting-IP": "192.0.2.22" } }), env);
     for (let attempt = 0; attempt < 60; attempt++) expect((await draw()).status).toBe(200);
     const blocked = await draw(); expect(blocked.status).toBe(429); expect(blocked.headers.get("Retry-After")).toBe("60");
-    expect(await env.DB.prepare("SELECT requests FROM request_budgets WHERE budget_key = 'draw:global'").first()).toEqual({ requests: 60 });
-    await env.DB.prepare("UPDATE request_budgets SET expires_at = 1").run();
+    expect((await runInDurableObject(storageControl(env), (_instance, state) => state.storage.kv.get<{ total: number }>("budget:draw")))?.total).toBe(60);
+    await runInDurableObject(storageControl(env), (_instance, state) => {
+      const budget = state.storage.kv.get<{ expiresAt: number }>("budget:draw")!;
+      state.storage.kv.put("budget:draw", { ...budget, expiresAt: 1 });
+    });
     expect((await draw()).status).toBe(200);
   });
 

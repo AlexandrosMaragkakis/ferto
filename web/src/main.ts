@@ -5,10 +5,13 @@ import { ArtworkTheme } from "./artwork-theme";
 import type { OperationalHistory } from "../../src/operations";
 import { fetchWithDeadline } from "../../src/request";
 import { RecentHistory, type HistoryStorage, type RecentTrack as Recommendation } from "./recent-history";
+import type { Capacity } from "../../src/storage-control-state";
 
 type RecommendationResponse = { recommendation: Recommendation | null; candidateCount: number };
 type RefreshStatus = ProgressSnapshot & {
-  state?: "idle" | "active" | "waiting" | "failed";
+  state?: "idle" | "active" | "waiting" | "failed" | "paused";
+  capacity?: Capacity;
+  pendingSaves?: number;
   refreshId?: string | null;
   phase?: string | null;
   phaseLabel?: string | null;
@@ -285,7 +288,7 @@ async function load(avoidRepeat = false) {
 }
 
 function refreshIsActive(snapshot = refresh) {
-  return Boolean(snapshot?.refreshId && ["active", "waiting"].includes(snapshot.state ?? ""));
+  return snapshot?.state === "paused" || Boolean(snapshot?.refreshId && ["active", "waiting"].includes(snapshot.state ?? ""));
 }
 
 function updateRefreshControl() {
@@ -306,7 +309,12 @@ function showRefreshStatus(snapshot: RefreshStatus) {
   const warnings = snapshot.warnings?.length ? ` Warnings: ${snapshot.warnings.join("; ")}.` : "";
   const next = snapshot.nextRefreshAt ? ` Next scheduled refresh: ${scheduleUtc(snapshot.nextRefreshAt)}.` : "";
   const publication = snapshot.lastPublicationAt ? ` New discoveries last made available: ${scheduleUtc(snapshot.lastPublicationAt)}.` : "";
-  if (snapshot.state === "failed") {
+  if (snapshot.state === "paused") {
+    const reason = snapshot.capacity?.reason === "storage"
+      ? "Discovery is paused to protect the remaining storage. Existing songs remain available; space is checked automatically."
+      : "Discovery is paused to preserve the daily database allowance. It will be checked again after midnight UTC.";
+    refreshMessage(`${reason}${publication}${next}`);
+  } else if (snapshot.state === "failed") {
     const progress = progressText(snapshot);
     refreshMessage(`Refresh failed${snapshot.error ? ` — ${snapshot.error}` : ""}. ${progress ? `${progress}. ` : ""}You can retry now.${next}`);
   } else if (snapshot.state === "waiting") {
@@ -325,12 +333,18 @@ function showRefreshStatus(snapshot: RefreshStatus) {
   } else {
     refreshMessage(next.trim());
   }
+  const capacity = snapshot.capacity;
+  if (capacity?.bytes !== null && capacity?.bytes !== undefined && (capacity.warning || capacity.paused)) {
+    $("#refresh-status").textContent += `\nStorage: ${(capacity.bytes / 1_000_000).toFixed(1)} / ${(capacity.limitBytes / 1_000_000).toFixed(0)} MB.`;
+  }
+  if (snapshot.pendingSaves) $("#refresh-status").textContent += `\n${snapshot.pendingSaves} Spotify save(s) awaiting FERTO confirmation. They will be reconciled automatically.`;
   updateRefreshControl();
 }
 
 function schedulePoll(delay = 10_000) {
   window.clearTimeout(pollTimer);
   if (refresh?.state === "waiting" && (refresh.retryAfterSeconds ?? 0) > 60) delay = Math.max(delay, 60_000);
+  if (refresh?.state === "paused") delay = Math.max(delay, 60_000);
   if (owner && refreshIsActive()) pollTimer = window.setTimeout(() => void pollRefresh(), delay);
 }
 
@@ -370,10 +384,12 @@ async function ownerState() {
       // backend re-sends the same durable generation and revision, so this is
       // idempotent and never creates overlapping rebuild work.
       try {
-        const response = await api("/api/owner/refresh", { method: "POST" });
-        if (response.ok) {
-          refresh = await response.json() as RefreshStatus;
-          showRefreshStatus(refresh);
+        if (refresh.state !== "paused") {
+          const response = await api("/api/owner/refresh", { method: "POST" });
+          if (response.ok) {
+            refresh = await response.json() as RefreshStatus;
+            showRefreshStatus(refresh);
+          }
         }
       } catch {
         // Status polling below remains a recovery path for a transient error.
@@ -396,11 +412,13 @@ async function ownerAction(path: string, working: string, failure: string): Prom
   let confirmedId: unknown;
   try {
     const response = await api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trackId: acted.spotify_id }) });
-    succeeded = response.ok;
-    if (succeeded) {
-      try { confirmedId = (await response.json() as { recordingId?: unknown })?.recordingId; } catch { /* Older successful responses still remove the acted-on id. */ }
-    }
-    message(succeeded ? "" : response.status === 401 ? SESSION_EXPIRED_MESSAGE : failure);
+    let result: { ok?: boolean; recordingId?: unknown; error?: unknown; pending?: boolean; code?: string } = {};
+    try { result = await response.json() as typeof result; } catch { /* Older successful responses still remove the acted-on id. */ }
+    succeeded = response.ok && response.status !== 202 && result.ok !== false;
+    confirmedId = result.recordingId;
+    const explicitOutcome = result.pending || ["storage", "daily_reads", "daily_writes", "save_busy", "pending_saves_full"].includes(result.code ?? "");
+    message(succeeded ? "" : response.status === 401 ? SESSION_EXPIRED_MESSAGE
+      : explicitOutcome && typeof result.error === "string" ? result.error : failure);
   } catch {
     message(ACTION_UNREACHABLE_MESSAGE);
   } finally {

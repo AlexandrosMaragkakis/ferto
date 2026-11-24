@@ -9,7 +9,7 @@ For a credential-free preview, start with the [local demo](../README.md#try-it-l
 - Node.js 24.22.2 (see `.nvmrc`) and npm 11.19.1
 - A Spotify app (dashboard → create app) for the client id.
   Spotify Development Mode requires the app owner to have Spotify Premium.
-- A Cloudflare account for the Worker, D1, and Queue (local development needs
+- A Cloudflare account for the Worker, D1, Queue and SQLite-backed Durable Object (local development needs
   none of this beyond wrangler's local mode)
 
 ## Real first-time setup
