@@ -1,7 +1,6 @@
 # D1 capacity safeguards roadmap
 
-**Status:** Implemented and deployed; final live-maintenance evidence is being
-recorded below.
+**Status:** Complete. Implemented, verified and deployed on 24 November 2026.
 
 **Updated:** 24 November 2026. This replaces the initial discussion-only task.
 
@@ -127,11 +126,11 @@ the DO's own Free-plan allowances remain separate. See the
 
 ## 4. Verify release behavior and actual storage recovery
 
-**Status:** Production release complete; observing the first maintenance tick.
+**Status:** Complete. Production release and scheduled maintenance verified.
 
 - [x] Run full verification, secret checks and dependency audit for each release.
 - [x] Use a verified pre-release backup and the existing deployment safeguards.
-- [ ] Compare Cloudflare's real storage and daily read/write metrics before and
+- [x] Compare Cloudflare's real storage and daily read/write metrics before and
   after bounded maintenance; distinguish reusable pages from physical reclaim.
 - [x] Confirm public browsing, owner-action authorization, queue delivery and
   retained refresh state after release. Verify positive owner-save/failure paths
@@ -173,3 +172,21 @@ durable budget remains active. The queue consumer processed a delivery and
 preserved the existing provider wait; source advancement correctly waits for
 that deadline. Positive and partial owner-save paths were tested locally, using
 synthetic provider responses. Verification makes no production Spotify writes.
+
+The observed scheduled maintenance batch removed exactly 32 expired rows from
+each of the four caches (128 total), reporting 512 D1 rows read and 128 written.
+The complete scheduled invocation reported 517 reads and 128 writes, with no
+exceptions. Both Cron schedules are registered; the first observed batch arrived
+on the next quarter-hour after the initial post-deploy slot. The cache cap held
+while the existing refresh remained quota-waiting.
+
+Cloudflare storage and account-wide UTC-day usage were checked before deployment,
+after deployment and after maintenance, with healthy headroom. Removing expired
+rows makes pages reusable; a single bounded batch does not establish full-backlog
+physical reclamation. Exact production metrics and raw logs remain private.
+
+The closing CI/documentation change preserves an independent producer-manifest
+checksum for both release downloads, with two additional rejection regressions.
+Its Worker, frontend, bindings, dependency lockfile and D1 migrations match the
+deployed `800eef86c352` runtime; closing the evidence does not require another
+runtime rollout.
