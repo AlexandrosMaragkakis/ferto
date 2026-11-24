@@ -116,8 +116,9 @@ configured update proposals. Deeper architecture is documented in the
 
 The [completed development roadmap](docs/roadmap.md) records the CI reliability,
 retention preview, first versioned release and recently shown tracks work.
-The [D1 capacity safeguards roadmap](docs/tasks/d1-capacity.md) tracks bounded
-cache maintenance, storage-failure handling and capacity warnings.
+The [completed D1 capacity safeguards roadmap](docs/tasks/d1-capacity.md) records
+bounded cache maintenance, storage-failure handling, capacity warnings and the
+verified production rollout.
 
 ## License and assets
 
